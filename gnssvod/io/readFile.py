@@ -182,11 +182,11 @@ def read_navFile(navigationFile):
 #----------------------------- OBSERVATION FILE --------------------------
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
-def read_obsFile(observationFile,header=False):
+def read_obsFile(observationFile, header=False, unzip_path=None):
     if observationFile.endswith(".Z")==True:
         raise Warning("All I/O functions take uncompressed files as an input (remove .Z/.gz from filename) | Next release will include this feature...")
     # check if observationFile exists or not
-    isexist(observationFile)
+    observationFile = isexist(observationFile, delete=False, unzip_path=unzip_path)
     # open file
     f = open(observationFile, errors = 'ignore')
     obsLines = f.readlines()
@@ -232,11 +232,11 @@ def read_obsFile_v2(observationFile,header=False):
             line +=1
         elif 'TIME OF FIRST OBS' in obsLines[line]:
             start_date = obsLines[line][0:obsLines[line].index('TIME')].split()[0:-1]
-            start_date = datetime.datetime(*np.array(start_date,dtype=float).round().astype(int))
+            start_date = datetime.datetime(*np.array(start_date,dtype=float).astype(int))
             line += 1
         elif 'TIME OF LAST OBS' in obsLines[line]:
             end_date = obsLines[line][0:obsLines[line].index('TIME')].split()[0:-1]
-            end_date = datetime.datetime(*np.array(end_date,dtype=float).round().astype(int))
+            end_date = datetime.datetime(*np.array(end_date,dtype=float).astype(int))
             line += 1
         elif 'END OF HEADER' in obsLines[line]:
             line += 1
@@ -399,6 +399,7 @@ def read_obsFile_v3(obsFileName,header):
             line += 1
         elif 'TIME OF LAST OBS' in obsLines[line]:
             end_date = obsLines[line][0:obsLines[line].index('TIME')].split()[0:-1]
+            print(end_date)
             end_date = datetime.datetime(*np.array(end_date,dtype=float).round().astype(int))
             line += 1
         elif 'SYS / # / OBS TYPES' in obsLines[line]:

@@ -6,6 +6,8 @@ pair_obs merges and pairs observations from sites according to specified pairing
 # ===========================================================
 # ========================= imports =========================
 import os
+import sys
+from tqdm import trange, tqdm
 import time
 import glob
 import datetime
@@ -30,7 +32,9 @@ def preprocess(filepattern,
                keepvars=None,
                outputdir=None,
                overwrite=False,
-               outputresult=False):
+               unzip_path=None,
+               outputresult=False,
+               time_period=None):
     """
     Returns lists of Observation objects containing GNSS observations read from RINEX observation files
     
@@ -75,23 +79,28 @@ def preprocess(filepattern,
     """
     # grab all files matching the patterns
     filelist = get_filelist(filepattern)
-    
+
     out = dict()
     for item in filelist.items():
         station_name = item[0]
         filelist = item[1]
 
+        # filter files by time period
+        if time_period is not None:
+            filelist = filter_filelist(filelist, time_period)
+
         # checking which files will be skipped (if necessary)
         if (not overwrite) and (outputdir is not None):
             # gather all files that already exist in the outputdir
-            files_to_skip = get_filelist({station_name:f"{outputdir[station_name]}*.nc"})
+            files_to_skip = get_filelist({station_name:f"{outputdir[station_name]}\\*.nc"})
             files_to_skip = [os.path.basename(x) for x in files_to_skip[station_name]]
         else:
             files_to_skip = []
         
         # for each file
         result = []
-        for i,filename in enumerate(filelist):
+        for i, filename in tqdm(enumerate(filelist), desc="Preprocessing"):#, file=sys.stdout, colour='GREEN'):#, unit="iteration", position=0, leave=True):
+            # print("\n")
             # determine the name of the output file that will be saved at the end of the loop
             out_name = os.path.splitext(os.path.basename(filename))[0]+'.nc'
             # if the name of the saved output file is in the files to skip, skip processing
@@ -100,7 +109,7 @@ def preprocess(filepattern,
                 continue # skip remainder of loop and go directly to next filename
             
             # read in the file
-            x = read_obsFile(filename)
+            x = read_obsFile(filename, unzip_path=unzip_path)
             print(f"Processing {len(x.observation):n} individual observations")
 
             # only keep required vars
@@ -141,7 +150,7 @@ def preprocess(filepattern,
                 if not os.path.exists(ioutputdir):
                     os.makedirs(ioutputdir)
                 # delete file if it exists
-                out_path = os.path.join(ioutputdir,out_name)
+                out_path = os.path.join(ioutputdir, out_name)
                 if os.path.exists(out_path):
                     os.remove(out_path)
                 # save as NetCDF
@@ -152,7 +161,7 @@ def preprocess(filepattern,
                 ds.attrs['approx_position'] = x.approx_position
                 ds.to_netcdf(out_path)
                 print(f"Saved {len(x.observation):n} individual observations in {out_name}")
-                
+
         # store station in memory if required
         if outputresult:
             out[station_name]=result
@@ -163,6 +172,7 @@ def preprocess(filepattern,
         return
 
 def resample_obs(obs,interval):
+    obs.observation['SYSTEM'] = pd.NA
     obs.observation = obs.observation.groupby([pd.Grouper(freq=interval, level='Epoch'),pd.Grouper(level='SV')]).mean()
     obs.observation['epoch'] = obs.observation.index.get_level_values('Epoch')
     obs.observation['SYSTEM'] = _system_name(obs.observation.index.get_level_values("SV"))
@@ -203,16 +213,32 @@ def get_filelist(filepatterns):
         search_pattern = item[1]
         flist = glob.glob(search_pattern)
         if len(flist)==0:
-            raise Warning(f"Could not find any files matching the pattern {search_pattern}")
+            print("no files with .nc")
+            # raise Warning(f"Could not find any files matching the pattern {search_pattern}")
         filelists[station_name] = flist
     return filelists
 
+
+def filter_filelist(files, time_period):
+    date_min = time_period[0].left
+    date_max = time_period[-1].right
+
+    filtered = []
+    for f in files:
+        try:
+            date_time = pd.to_datetime(f.split("raw_")[1][:10], format='%Y%m%d%H')
+            if date_time >= date_min and date_time < date_max:
+                filtered.append(f)
+        except:
+            continue
+
+    return filtered
 
 #--------------------------------------------------------------------------
 #----------------- PAIRING OBSERVATION FILES FROM SITES -------------------
 #-------------------------------------------------------------------------- 
 
-def pair_obs(filepattern,pairings,timeintervals,keepvars=None,outputdir=None):
+def pair_obs(filepattern, pairings, timeintervals, keepvars=None, outputdir=None, time_period=None):
     """
     Merges and pairs observations from sites according to specified pairing rules over the desired time intervals
     
@@ -262,6 +288,11 @@ def pair_obs(filepattern,pairings,timeintervals,keepvars=None,outputdir=None):
         # get all files
         ref_files = get_filelist({ref_name:filepattern[ref_name]})
         grn_files = get_filelist({grn_name:filepattern[grn_name]})
+        # # filter files by time period
+        # if time_period is not None:
+        #     ref_files = filter_filelist(ref_files, time_period)
+        #     grn_files = filter_filelist(grn_files, time_period)
+
         # get Epochs from all files
         ref_epochs = [xr.open_mfdataset(x).Epoch for x in ref_files[ref_name]]
         grn_epochs = [xr.open_mfdataset(x).Epoch for x in grn_files[grn_name]]
@@ -319,7 +350,7 @@ def pair_obs(filepattern,pairings,timeintervals,keepvars=None,outputdir=None):
 #----------------- CALCULATING VOD -------------------
 #-------------------------------------------------------------------------- 
 
-def calc_vod(filepattern,pairings):
+def calc_vod(filepattern,pairings, outputdir=None):
     """
     Combines a list of NetCDF files containing paired GNSS receiver data, calculates VOD and returns that data.
 
@@ -359,9 +390,18 @@ def calc_vod(filepattern,pairings):
             varname_ref = ivod[1][0]
             varname_grn = ivod[1][1]
             varname_ele = ivod[1][2]
-            data[varname_vod] = -np.log(np.power(10,(data[varname_grn]-data[varname_ref])/10)) \
-                                *np.cos(np.deg2rad(90-data[varname_ele]))
+            data["VOD"] = -np.log(np.power(10,(data[varname_grn]-data[varname_ref])/10)) \
+                                * np.cos(np.deg2rad(90-data[varname_ele]))
         # store result in dictionary
-        out[case_name]=data
+        out[varname_vod] = data
 
+        if outputdir:
+            outputdir = outputdir[case_name]
+            date_s = np.min(out[case_name].axes[0])[0].strftime("%Y%m%d")
+            date_e = np.max(out[case_name].axes[0])[0].strftime("%Y%m%d")
+            filename = f'vod_{case_name}_{date_s}_{date_e}.nc'
+            r = out[case_name].to_xarray()
+            path=os.path.join(outputdir, filename)
+            r.to_netcdf(path)
+            print(f"Save vod to {path}")
     return out

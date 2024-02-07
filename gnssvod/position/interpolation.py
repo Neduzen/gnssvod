@@ -47,7 +47,7 @@ def sp3_interp_fast(epoch, interval=30, poly_degree=16, sp3_product="gfz", clock
     sp3_resampled = []
     for sv in svList:
         sp3_temp = sp3.xs(sv,level='SV')[['X','Y','Z']] * 1000 # km to m
-        sp3_temp_resampled = sp3_temp.resample(f"{interval}S")
+        sp3_temp_resampled = sp3_temp.resample(f"{interval}s")
         sp3_temp_resampled = sp3_temp_resampled.interpolate(method='cubic')
         sp3_temp_resampled['Vx']=-sp3_temp_resampled['X'].diff(periods=-1)/interval
         sp3_temp_resampled['Vy']=-sp3_temp_resampled['Y'].diff(periods=-1)/interval
@@ -66,7 +66,7 @@ def sp3_interp_fast(epoch, interval=30, poly_degree=16, sp3_product="gfz", clock
     clock_resampled = []
     for sv in svList_clk:
         clock_temp = clock.xs(sv,level='SV')
-        clock_temp_resampled = clock_temp.resample(f"{interval}S")
+        clock_temp_resampled = clock_temp.resample(f"{interval}s")
         clock_temp_resampled = clock_temp_resampled.interpolate(method='cubic')
         clock_resampled.append(clock_temp_resampled)
 
