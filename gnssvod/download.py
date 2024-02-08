@@ -286,9 +286,9 @@ def get_sp3(sp3file, directory=os.getcwd()):
         raise Warning('No internet connection! | Cannot download orbit file')
     
     sp3FileDir = 'products'
-    if int(gpsWeek)<2038:
+    if int(gpsWeek) < 2038:
         intermediateDir = ''
-    elif int(gpsWeek)<2250:
+    elif int(gpsWeek) < 2247:
         intermediateDir = 'mgex'
     else:
         intermediateDir = ''
@@ -341,9 +341,9 @@ def get_clock(clockFile, directory=os.getcwd()):
         raise Warning('No internet connection! | Cannot download clock file')
     
     clockFileDir = 'products'
-    if int(gpsWeek)<2038:
+    if int(gpsWeek) < 2038:
         intermediateDir = ''
-    elif int(gpsWeek)<2250:
+    elif int(gpsWeek) < 2247:
         intermediateDir = 'mgex'
     else:
         intermediateDir = ''
