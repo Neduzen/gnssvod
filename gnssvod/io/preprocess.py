@@ -14,13 +14,15 @@ import datetime
 import numpy as np
 import pandas as pd
 import xarray as xr
-from gnssvod.io.readFile import read_obsFile
+from gnssvod.io.readFile import read_obsFile, FileError
 from gnssvod.funcs.checkif import (isfloat, isint, isexist)
 from gnssvod.funcs.date import doy2date
 from gnssvod.position.interpolation import sp3_interp_fast
 from gnssvod.position.position import gnssDataframe
 from gnssvod.funcs.constants import _system_name
 import pdb
+import logging
+
 # ===========================================================
 
 #-------------------------------------------------------------------------
@@ -92,7 +94,10 @@ def preprocess(filepattern,
         # checking which files will be skipped (if necessary)
         if (not overwrite) and (outputdir is not None):
             # gather all files that already exist in the outputdir
-            files_to_skip = get_filelist({station_name:f"{outputdir[station_name]}\\*.nc"})
+            extension = f"/*.nc"  # Linux extension
+            if os.name == 'nt':  # 'nt' represents Windows
+                extension = f"\\*.nc"
+            files_to_skip = get_filelist({station_name: outputdir[station_name]+extension})
             files_to_skip = [os.path.basename(x) for x in files_to_skip[station_name]]
         else:
             files_to_skip = []
@@ -100,71 +105,77 @@ def preprocess(filepattern,
         # for each file
         result = []
         for i, filename in tqdm(enumerate(filelist), desc="Preprocessing"):#, file=sys.stdout, colour='GREEN'):#, unit="iteration", position=0, leave=True):
-            # print("\n")
-            # determine the name of the output file that will be saved at the end of the loop
-            out_name = os.path.splitext(os.path.basename(filename))[0]+'.nc'
-            # if the name of the saved output file is in the files to skip, skip processing
-            if out_name in files_to_skip:
-                print(f"{out_name} already exists, skipping.. (pass overwrite=True to overwrite)")
-                continue # skip remainder of loop and go directly to next filename
-            
-            # read in the file
-            x = read_obsFile(filename, unzip_path=unzip_path)
-            print(f"Processing {len(x.observation):n} individual observations")
+            try:
+                # determine the name of the output file that will be saved at the end of the loop
+                out_name = os.path.splitext(os.path.basename(filename))[0]+'.nc'
+                # if the name of the saved output file is in the files to skip, skip processing
+                if out_name in files_to_skip:
+                    print(f"{out_name} already exists, skipping.. (pass overwrite=True to overwrite)")
+                    continue # skip remainder of loop and go directly to next filename
 
-            # only keep required vars
-            if keepvars is not None:
-                # only keep rows for which required vars are not NA
-                x.observation = x.observation.dropna(how='all',subset=keepvars)
-                # subselect only the required vars, + always keep 'epoch' and 'SYSTEM'
-                x.observation_types = np.unique(np.concatenate((keepvars,['epoch','SYSTEM'])))
-                x.observation = x.observation[x.observation_types]
-                
-            # resample if required
-            if interval is not None:
-                x = resample_obs(x,interval)
-                
-            # calculate Azimuth and Elevation if required
-            if orbit:
-                print(f"Calculating Azimuth and Elevation")
-                # note: orbit cannot be parallelized easily because it 
-                # downloads and unzips third-party files in the current directory
-                if not 'orbit_data' in locals():
-                    # if there is no previous orbit data, the orbit data is returned as well
-                    x, orbit_data = add_azi_ele(x)
+                # read in the file
+                x = read_obsFile(filename, unzip_path=unzip_path)
+                if x is not None:
+                    print(f"Processing {len(x.observation):n} individual observations")
+
+                    # only keep required vars
+                    if keepvars is not None:
+                        # only keep rows for which required vars are not NA
+                        x.observation = x.observation.dropna(how='all',subset=keepvars)
+                        # subselect only the required vars, + always keep 'epoch' and 'SYSTEM'
+                        x.observation_types = np.unique(np.concatenate((keepvars,['epoch','SYSTEM'])))
+                        x.observation = x.observation[x.observation_types]
+
+                    # resample if required
+                    if interval is not None:
+                        x = resample_obs(x,interval)
+
+                    # calculate Azimuth and Elevation if required
+                    if orbit:
+                        print(f"Calculating Azimuth and Elevation")
+                        # note: orbit cannot be parallelized easily because it
+                        # downloads and unzips third-party files in the current directory
+                        if not 'orbit_data' in locals():
+                            # if there is no previous orbit data, the orbit data is returned as well
+                            x, orbit_data = add_azi_ele(x)
+                        else:
+                            # on following iterations the orbit data is tentatively recycled to reduce computational time
+                            x, orbit_data = add_azi_ele(x, orbit_data)
+
+                    # make sure we drop any duplicates
+                    x.observation=x.observation[~x.observation.index.duplicated(keep='first')]
+
+                    # store result in memory
+                    if outputresult:
+                        result[i]=x
+
+                    # write to file if required
+                    if outputdir is not None:
+                        ioutputdir = outputdir[station_name]
+                        # check that the output directory exists
+                        if not os.path.exists(ioutputdir):
+                            os.makedirs(ioutputdir)
+                        # delete file if it exists
+                        out_path = os.path.join(ioutputdir, out_name)
+                        if os.path.exists(out_path):
+                            os.remove(out_path)
+                        # save as NetCDF
+                        ds = x.observation.to_xarray()
+                        ds.attrs['filename'] = x.filename
+                        ds.attrs['observation_types'] = x.observation_types
+                        ds.attrs['epoch'] = x.epoch.isoformat()
+                        ds.attrs['approx_position'] = x.approx_position
+                        ds.to_netcdf(out_path)
+                        print(f"Saved {len(x.observation):n} individual observations in {out_name}")
                 else:
-                    # on following iterations the orbit data is tentatively recycled to reduce computational time
-                    x, orbit_data = add_azi_ele(x, orbit_data)
-            
-            # make sure we drop any duplicates
-            x.observation=x.observation[~x.observation.index.duplicated(keep='first')]
-            
-            # store result in memory
-            if outputresult:
-                result[i]=x
-                
-            # write to file if required
-            if outputdir is not None:
-                ioutputdir = outputdir[station_name]
-                # check that the output directory exists
-                if not os.path.exists(ioutputdir):
-                    os.makedirs(ioutputdir)
-                # delete file if it exists
-                out_path = os.path.join(ioutputdir, out_name)
-                if os.path.exists(out_path):
-                    os.remove(out_path)
-                # save as NetCDF
-                ds = x.observation.to_xarray()
-                ds.attrs['filename'] = x.filename
-                ds.attrs['observation_types'] = x.observation_types
-                ds.attrs['epoch'] = x.epoch.isoformat()
-                ds.attrs['approx_position'] = x.approx_position
-                ds.to_netcdf(out_path)
-                print(f"Saved {len(x.observation):n} individual observations in {out_name}")
-
+                    print(f"File was empty or not there: {filename}")
+            except FileError as ex:
+                logging.error(f"File error for {out_name} while execution and not successfully processed: {ex}")
+                print(f"Warning for file {out_name} while execution and not successfully processed: {ex}")
         # store station in memory if required
         if outputresult:
             out[station_name]=result
+        logging.info(f"From {len(item[1])} filtered to {len(filelist)} saved into .nc files")
 
     if outputresult:
         return out
@@ -213,24 +224,26 @@ def get_filelist(filepatterns):
         search_pattern = item[1]
         flist = glob.glob(search_pattern)
         if len(flist)==0:
-            print("no files with .nc")
+            print(f"no files with .nc with {search_pattern}")
             # raise Warning(f"Could not find any files matching the pattern {search_pattern}")
         filelists[station_name] = flist
     return filelists
 
 
-def filter_filelist(files, time_period):
+def filter_filelist(files, time_period, splitter="raw_"):
     date_min = time_period[0].left
     date_max = time_period[-1].right
+    print(f"Filter files between {date_min} and {date_max}")
 
     filtered = []
     for f in files:
         try:
-            date_time = pd.to_datetime(f.split("raw_")[1][:10], format='%Y%m%d%H')
-            if date_time >= date_min and date_time < date_max:
+            date_time = pd.to_datetime(f.split(splitter)[1][:10], format='%Y%m%d%H')
+            if date_min <= date_time < date_max:
                 filtered.append(f)
         except:
             continue
+    print(f"From {len(files)} filtered to {len(filtered)}")
 
     return filtered
 
@@ -284,14 +297,15 @@ def pair_obs(filepattern, pairings, timeintervals, keepvars=None, outputdir=None
         print(f'Listing the files matching with the interval')
         ref_name = item[1][0]
         grn_name = item[1][1]
-        overall_interval = pd.Interval(left=timeintervals.min().left,right=timeintervals.max().right)
+        overall_interval = pd.Interval(left=timeintervals.min().left, right=timeintervals.max().right)
+        print(f"Interval: {overall_interval}")
         # get all files
         ref_files = get_filelist({ref_name:filepattern[ref_name]})
         grn_files = get_filelist({grn_name:filepattern[grn_name]})
         # # filter files by time period
-        # if time_period is not None:
-        #     ref_files = filter_filelist(ref_files, time_period)
-        #     grn_files = filter_filelist(grn_files, time_period)
+        if time_period is not None:
+            ref_files[ref_name] = filter_filelist(ref_files[ref_name], time_period)
+            grn_files[grn_name] = filter_filelist(grn_files[grn_name], time_period)
 
         # get Epochs from all files
         ref_epochs = [xr.open_mfdataset(x).Epoch for x in ref_files[ref_name]]
@@ -320,7 +334,7 @@ def pair_obs(filepattern, pairings, timeintervals, keepvars=None, outputdir=None
         if keepvars is not None:
             iout = iout[keepvars].dropna(how='all')
         # split the dataframe into multiple dataframes according to timeintervals
-        out[case_name] = [x for x in iout.groupby(pd.cut(iout.index.get_level_values('Epoch').tolist(), timeintervals))]
+        out[case_name] = [x for x in iout.groupby(pd.cut(iout.index.get_level_values('Epoch').tolist(), time_period))]
         
     # output the files
     if outputdir:
@@ -350,7 +364,7 @@ def pair_obs(filepattern, pairings, timeintervals, keepvars=None, outputdir=None
 #----------------- CALCULATING VOD -------------------
 #-------------------------------------------------------------------------- 
 
-def calc_vod(filepattern,pairings, outputdir=None):
+def calc_vod(filepattern,pairings, outputdir=None, time_period=None):
     """
     Combines a list of NetCDF files containing paired GNSS receiver data, calculates VOD and returns that data.
 
@@ -380,6 +394,12 @@ def calc_vod(filepattern,pairings, outputdir=None):
         case_name = item[0]
         print(f'Processing {case_name}')
         files = get_filelist({case_name:filepattern[case_name]})
+        # Overall interval
+        overall_interval = pd.Interval(left=time_period.min().left, right=time_period.max().right)
+        print(f"Interval: {overall_interval}")
+        # # filter files by time period
+        if time_period is not None:
+            files[case_name] = filter_filelist(files[case_name], time_period, splitter=f'{case_name}_')
         # read in all data
         data = [xr.open_mfdataset(x).to_dataframe().dropna(how='all') for x in files[case_name]]
         # concatenate
@@ -393,15 +413,32 @@ def calc_vod(filepattern,pairings, outputdir=None):
             data["VOD"] = -np.log(np.power(10,(data[varname_grn]-data[varname_ref])/10)) \
                                 * np.cos(np.deg2rad(90-data[varname_ele]))
         # store result in dictionary
-        out[varname_vod] = data
+        # out[varname_vod] = data
+
+        # Only keep rows with VOD
+        data = data.dropna(subset=['VOD'])
+
+        # split the dataframe into multiple dataframes according to timeintervals
+        out[case_name] = [x for x in data.groupby(pd.cut(data.index.get_level_values('Epoch').tolist(), time_period))]
 
         if outputdir:
             outputdir = outputdir[case_name]
-            date_s = np.min(out[case_name].axes[0])[0].strftime("%Y%m%d")
-            date_e = np.max(out[case_name].axes[0])[0].strftime("%Y%m%d")
-            filename = f'vod_{case_name}_{date_s}_{date_e}.nc'
-            r = out[case_name].to_xarray()
-            path=os.path.join(outputdir, filename)
-            r.to_netcdf(path)
-            print(f"Save vod to {path}")
+            for item in out.items():
+                case_name = item[0]
+                list_of_dfs = item[1]
+                if not os.path.exists(outputdir):
+                    os.makedirs(outputdir)
+                print(f'Saving files for {case_name} in {outputdir}')
+                for df in list_of_dfs:
+                    date_s = np.min(df[1].axes[0])[0].strftime("%Y%m%d")
+                    date_e = np.max(df[1].axes[0])[0].strftime("%Y%m%d")
+                    filename = f'vod_{case_name}_{date_s}_{date_e}.nc'
+                    # convert dataframe to xarray for saving to netcdf (if df is not empty)
+                    if len(df[1]) > 0:
+                        ds = df[1].to_xarray()
+                        ds.to_netcdf(os.path.join(outputdir, filename))
+                        print(f"Saved {len(df[1])} obs in {filename}")
+                    else:
+                        print(f"No databetween {date_s} and {date_e}, no file saved")
+                print(f"Saved vods' to {outputdir}")
     return out

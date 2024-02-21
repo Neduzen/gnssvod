@@ -19,6 +19,13 @@ from gnssvod.funcs.constants import _system_name
 from gnssvod.io.io import Observation, Header, Navigation, PEphemeris, _ObservationTypes
 # ===========================================================
 
+
+class FileError(Exception):
+    """A custom exception class."""
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)
+
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
 #----------------------------- NAVIGATION FILE ---------------------------
@@ -258,16 +265,22 @@ def read_obsFile_v2(observationFile,header=False):
     obsList = []
     SVList= []
     epochList = []
+    if len(obsLines)==0:
+        print("Obs file had no content except header")
+        return None
     while True:
         # --------------------------------------------------------------------------------------
         while True:
-            if 'COMMENT' in obsLines[0]:
+            if len(obsLines) == 0:
+                break
+            elif 'COMMENT' in obsLines[0]:
                 del obsLines[0]
                 line += 1
             elif 'APPROX POSITION XYZ' in obsLines[0]:
                 del obsLines[0]
                 line += 1
             elif 'REC # / TYPE / VERS' in obsLines[0]:
+                f.close()
                 raise Warning("Receiver type is changed! | Exiting...")
             elif isint(obsLines[0][1:3])==False:
                 print("Line", line, ":", obsLines[0]) # bu satırı sil!!!!
@@ -277,12 +290,17 @@ def read_obsFile_v2(observationFile,header=False):
             else:
                 break
         #---------------------------------------------------------------------------------------
-        year = int(obsLines[0][1:3])
+        try:
+            year = int(obsLines[0][1:3])
+        except Exception as e:
+            f.close()
+            raise FileError(f'Observation year not available. Error: {e}')
         if 79 < year < 100:
             year += 1900
         elif year <= 79:
             year += 2000
         else:
+            f.close()
             raise Warning('Observation year is not recognized! | Program stopped!')
         epoch = datetime.datetime(year = year, 
                                 month =int(obsLines[0][4:6]),

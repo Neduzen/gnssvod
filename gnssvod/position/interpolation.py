@@ -47,12 +47,13 @@ def sp3_interp_fast(epoch, interval=30, poly_degree=16, sp3_product="gfz", clock
     sp3_resampled = []
     for sv in svList:
         sp3_temp = sp3.xs(sv,level='SV')[['X','Y','Z']] * 1000 # km to m
-        sp3_temp_resampled = sp3_temp.resample(f"{interval}s")
-        sp3_temp_resampled = sp3_temp_resampled.interpolate(method='cubic')
-        sp3_temp_resampled['Vx']=-sp3_temp_resampled['X'].diff(periods=-1)/interval
-        sp3_temp_resampled['Vy']=-sp3_temp_resampled['Y'].diff(periods=-1)/interval
-        sp3_temp_resampled['Vz']=-sp3_temp_resampled['Z'].diff(periods=-1)/interval
-        sp3_resampled.append(sp3_temp_resampled)
+        if len(sp3_temp) > 2: # if less than 3 are available, its not possible to interpolate, disgard it
+            sp3_temp_resampled = sp3_temp.resample(f"{interval}s")
+            sp3_temp_resampled = sp3_temp_resampled.interpolate(method='cubic')
+            sp3_temp_resampled['Vx']=-sp3_temp_resampled['X'].diff(periods=-1)/interval
+            sp3_temp_resampled['Vy']=-sp3_temp_resampled['Y'].diff(periods=-1)/interval
+            sp3_temp_resampled['Vz']=-sp3_temp_resampled['Z'].diff(periods=-1)/interval
+            sp3_resampled.append(sp3_temp_resampled)
 
     sp3_resampled = _pd.concat(sp3_resampled, keys=svList, names=['SV']).reorder_levels(['Epoch', 'SV']).sort_index(level='Epoch')
     #--------------------------------------------------------------------------

@@ -1,8 +1,14 @@
+import os.path
 import sys
 from gnssvod.Gnss_site import Gnss_site
 from gnssvod.io.preprocess import (preprocess, get_filelist, pair_obs, calc_vod)
 import pandas as pd
 import configparser
+import xarray as xr
+import gnssvod.plot
+import logging
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 CONFIG_FILENAME = "config.ini"
@@ -25,10 +31,101 @@ def readConfigIni():
     return sites
 
 
+def plot_it():
+    # -----------------------------------------
+    # Test plot
+    # Load the data
+    # vod_dav = xr.open_dataset(r'C:\Users\jkesselr\Documents\PhD\Data\Objective2\GNSS\vod_Dav_20220101_20220201.nc')
+    files = ["vod_Dav_20220101_20220131.nc", "vod_Dav_20220201_20220228.nc", "vod_Dav_20220301_20220331.nc",
+             "vod_Dav_20220401_20220430.nc", "vod_Dav_20220501_20220531.nc", "vod_Dav_20220601_20220630.nc",
+             "vod_Dav_20220701_20220731.nc", "vod_Dav_20220801_20220822.nc", "vod_Dav_20220928_20220930.nc",
+             "vod_Dav_20221001_20221031.nc", "vod_Dav_20221101_20221130.nc", "vod_Dav_20221201_20221231.nc"]
+    path = r"Z:\group\rsws_gnss\VOD\Dav"
+    # vod_dav = [xr.open_mfdataset(os.path.join(path, x)).VOD for x in files]
+
+    vods = []
+    times = []
+    for f in files:
+        vod_dav = xr.open_dataset(os.path.join(path, f)).VOD
+        galileos = [x.startswith('E') for x in vod_dav.SV.data]
+        vod_poi = vod_dav[:, galileos]
+        # galileos2 = [x.startswith('E') for x in vod_dav[1].SV.data]
+        # vod_poi2 = vod_dav[0][:, galileos2]
+        vod_daily = vod_poi.sortby('Epoch').resample(Epoch='1D').mean()
+        dailyvod = np.nanmean(vod_daily, axis=1)
+        times.append(vod_daily.Epoch.values)
+        vods.append(dailyvod)
+
+    plt.figure()
+    for a in range(0, len(vods)):
+        plt.plot(times[a], vods[a], color="blue")
+    plt.ylabel('VOD')
+    plt.xlabel('Time')
+    plt.title('Davos VOD - daily average all E-satellites')
+    plt.legend()
+    plt.xticks(rotation=25)
+    plt.savefig('Dav_VOD_Galileo13_hourly.png')
+    plt.show()
+
+    # Extract tower and ground variables
+    dav_S1_tower = vod_dav['S1_ref']
+    dav_S1_ground = vod_dav['S1_grn']
+    # Plot the data
+    plt.plot(vod_dav['Epoch'], dav_S1_tower.sel(SV='S36'), label='tower')
+    plt.plot(vod_dav['Epoch'], dav_S1_ground.sel(SV='S36'), label='ground')
+    plt.ylabel('SNR')
+    plt.xlabel('Time')
+    plt.title('Davos geostationary satellite')
+    plt.legend()
+    plt.show()
+    plt.plot(vod_dav['Epoch'], vod_dav['VOD'].sel(SV='E13'))
+    plt.ylabel('VOD')
+    plt.xlabel('Time')
+    plt.title('Davos VOD - E13')
+    plt.legend()
+    plt.xticks(rotation=25)
+    plt.savefig('Dav_VOD_Galileo13.png')
+    plt.show()
+    # Resample to hourly values
+    dav_S1_tower_hourly = dav_S1_tower.resample(Epoch='1H').mean()
+    dav_S1_ground_hourly = dav_S1_ground.resample(Epoch='1H').mean()
+    dav_vod_hourly = vod_dav.resample(Epoch='1H').mean()
+    # Plot the data
+    plt.plot(dav_S1_tower_hourly['Epoch'], dav_S1_tower_hourly.sel(SV='S36'), label='tower')
+    plt.plot(dav_S1_ground_hourly['Epoch'], dav_S1_ground_hourly.sel(SV='S36'), label='ground')
+    plt.ylabel('SNR')
+    plt.xlabel('Time')
+    plt.title('Davos geostationary satellite')
+    plt.legend()
+    plt.xticks(rotation=25)
+    plt.savefig('Dav_stationary_hourly.png')
+    plt.show()
+
+    plt.plot(dav_S1_tower_hourly['Epoch'], dav_S1_tower_hourly.sel(SV='E13'), label='tower')
+    plt.plot(dav_S1_ground_hourly['Epoch'], dav_S1_ground_hourly.sel(SV='E13'), label='ground')
+    plt.ylabel('SNR')
+    plt.xlabel('Time')
+    plt.title('Davos - E13')
+    plt.legend()
+    plt.xticks(rotation=25)
+    plt.savefig('Dav_Galileo13_hourly.png')
+    plt.show()
+    plt.plot(dav_vod_hourly['Epoch'], dav_vod_hourly['VOD'].sel(SV='E13'))
+    plt.ylabel('VOD')
+    plt.xlabel('Time')
+    plt.title('Davos VOD - E13')
+    plt.legend()
+    plt.xticks(rotation=25)
+    plt.savefig('Dav_VOD_Galileo13_hourly.png')
+    plt.show()
+
+
 if __name__ == '__main__':
     args = sys.argv[1:]
     print("Main GNSS ------")
     print(args)
+    # Setup logging
+    logging.basicConfig(filename='gnss.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     sites = readConfigIni()
 
@@ -40,10 +137,8 @@ if __name__ == '__main__':
     site = None
     start_date = None
     is_autotime = False
-
-    # site="Laeg"
-    # station="Twr"
-    # mode="-n"
+    is_plot = False
+    year = None
 
     # Load console
     for i, arg in enumerate(args):
@@ -56,11 +151,15 @@ if __name__ == '__main__':
             is_vod = True
         if arg == '-s' or arg == '-site':
             site = args[i + 1]
+        if arg == '-plot':
+            is_plot = True
         if arg == '-dates':
             if args[i+1] == "auto":
                 is_autotime = True
             else:
-                start_date = pd.Timestamp(f'{args[i+1]} 00:00:00')
+                start_date = pd.Timestamp(f'{args[i + 1]} 00:00:00')
+        if arg == '-year':
+            year = args[i + 1]
 
     gnss_site = None
     for s in sites:
@@ -70,7 +169,7 @@ if __name__ == '__main__':
     if gnss_site is None:
         print("No site selected")
     if start_date is None:
-        start = pd.Timestamp("2022-01-01")
+        start_date = pd.Timestamp("2022-01-01")
 
     # Create netcdf from raw data
     if is_preprocessing:
@@ -81,75 +180,23 @@ if __name__ == '__main__':
         timeperiod = pd.interval_range(start=start_date, periods=31, freq='D')
         gnss_site.pairing(timeperiod)
     elif is_vod:
-        # start = pd.Timestamp("2022-01-01")
-        timeperiod = pd.interval_range(start=start_date, periods=31, freq='D')
-        gnss_site.calculate_vod(timeperiod)
-    # if mode=="-n":
-    #     #ReachLaeg1G
-    #     #ReachLaeg2T
-    #
-    #     if site == "Lae":
-    #         keepvars = ["S1", "S2"]
-    #             #["S1C", "S1X", "S2C", 'Azimuth', 'Elevation']  # , "S2I", "S2X", "S7I", "S7X"]
-    #         # ['S1', 'S2', 'Azimuth', 'Elevation']
-    #         if station == "Twr":
-    #             input_pattern = {'ReachLaeg2T': r'C:\Users\mniederb\Documents\run\gnss\in\Laeg2_Twr\*.zip'}
-    #             outdir = {'ReachLaeg2T': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\ReachLaeg2T'}
-    #         else:
-    #             input_pattern = {
-    #                 'ReachLaeg1G': r'C:\Users\mniederb\Documents\run\gnss\in\Laeg1_Grnd\*.zip'}
-    #             outdir = {'ReachLaeg1G': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\ReachLaeg1G'}
-    #             # input_pattern = {'Laeg2': r'C:\Users\mniederb\Documents\run\gnss\in\Laeg2_Twr'}
-    #             # {'station1':'/path/to/files/of/station1/*O'}
-    #     else:
-    #         keepvars = ["S1", "S2"]#, 'Azimuth', 'Elevation']
-    #         if station == "Twr":
-    #             input_pattern = {'Dav_Twr': r'C:\Users\mniederb\Documents\run\gnss\in\Dav2_Twr\*.zip'}
-    #             outdir = {'Dav_Twr': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\Dav_Twr'}
-    #         else:
-    #             input_pattern = {
-    #                 'Dav_Grnd': r'C:\Users\mniederb\Documents\run\gnss\in\Dav1_Grnd\*.zip'}
-    #             outdir = {'Dav_Grnd': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\Dav_Grnd'}
-    #             # input_pattern = {'Laeg2': r'C:\Users\mniederb\Documents\run\gnss\in\Laeg2_Twr'}
-    #             # {'station1':'/path/to/files/of/station1/*O'}
-    #
-    #     print(f"Preprocess of {input_pattern} to {outdir}")
-    #     preprocess(input_pattern, True, interval="60s", outputdir=outdir, keepvars=keepvars)
-    #
-    # elif mode=="-p":
-    #     #pairings = {'case1': ('station1', 'station2')}
-    #     #filepattern = {'station1': '/path/to/files/of/station1/*.nc',
-    #     #               'station2': '/path/to/files/of/station2/*.nc'}
-    #     timeperiod = pd.interval_range(start=pd.Timestamp('1/1/2023'), periods=31, freq='D')
-    #
-    #     if site == "Lae":
-    #         pairings = {'Lae': ('ReachLaeg2T', 'ReachLaeg1G')}
-    #         filepattern = {'ReachLaeg2T': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\ReachLaeg2T\*.nc',
-    #                        'ReachLaeg1G': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\ReachLaeg1G\*.nc'}
-    #         outputdir = {'Lae': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\paired'}
-    #     else:
-    #         pairings = {'Dav': ('Dav2_Twr', 'Dav1_Grnd')}
-    #         filepattern = {'Dav2_Twr': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\Dav_Twr\*.nc',
-    #                        'Dav1_Grnd': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\Dav_Grnd\*.nc'}
-    #         outputdir = {'Dav': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\paired'}
-    #
-    #     print("Pairing: " + str(pairings))
-    #     pair_obs(filepattern, pairings, timeperiod, outputdir=outputdir)
-    # elif mode == "-v":
-    #     if site=="Dav":
-    #         filepattern = {'Dav': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\paired\*.nc'} #'case2': '/path/to/files/of/case2/*.nc'}
-    #         pairing = {'Dav': ('S1_ref', 'S1_grn', 'Elevation_grn')} #,'VOD2': ('S2C_ref', 'S2C_grn', 'Elevation_grn')}
-    #         outputdir = {'Dav': r'C:\Users\mniederb\Documents\run\gnss\out\Dav\vod'}
-    #     else:
-    #         filepattern = {
-    #             'Lae': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\paired\*.nc'}
-    #         pairing = {
-    #             'Lae': ('S1C_ref', 'S1C_grn', 'Elevation_grn')}
-    #         outputdir = {'Lae': r'C:\Users\mniederb\Documents\run\gnss\out\Lae\vod'}
-    #
-    #     print(f"vod: {filepattern}")
-    #     result = calc_vod(filepattern, pairing, outputdir)
-    #     print(result)
+        if year is None:
+            print("No year defined. Cancel process.")
+            print("Define with: '-year 2021'")
+        else:
+            year_minus = str(int(year)-1)
+            timeperiod = pd.interval_range(start=pd.Timestamp(f"{year_minus}-12-31 23:59:59"), end=pd.Timestamp(f"{year}-12-31 23:59:59"), freq='ME')
+            gnss_site.calculate_vod(timeperiod)
+    elif is_plot:
+        # filename = "vod_Dav_20220101_20220201.nc"
+        # vod_dav = xr.open_dataset(fr'Z:\group\rsws_gnss\VOD\Dav\{filename}')
+        # # vod_lae = xr.open_dataset('gnss/Lae_20240129000000_20240130000000.nc')
+        # station = {"Dav": {"filename": filename, "observation": vod_dav, "version": "3"}}
+        # orbit = {"Azimuth": vod_dav.Azimuth_ref, "Elevation": vod_dav.Elevation_ref}
+        # sv_list = vod_dav.SV
+        # gnssvod.plot.azelplot(station, orbit, SVlist=sv_list)
+        plot_it()
+
     else:
         print("No mode")
 

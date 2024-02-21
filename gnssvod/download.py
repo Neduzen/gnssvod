@@ -298,7 +298,7 @@ def get_sp3(sp3file, directory=os.getcwd()):
     ftp = '/'.join(fileDir) # FTP link of file
     
     try:
-        print('Downloading:', fileName, end = '')
+        print('Downloading:', fileName, end='')
         with TqdmUpTo(unit='B', unit_scale=True, unit_divisor=1024, miniters=1, desc=fileName) as t:
             url.urlretrieve(ftp, file_topath, reporthook=t.update_to)
         print(' | Download completed for', fileName)

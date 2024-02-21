@@ -1,5 +1,6 @@
 import configparser
 import datetime
+import logging
 import os
 import sys
 import datetime as datetime
@@ -52,6 +53,7 @@ class Gnss_site:
         input_pattern = {name: rawpath}
         outdir = {name: temppath}
 
+        logging.info(f"Preprocess of site {self.name} - {location} to {outdir} between {time_period[0].left} and {time_period[-1].right}")
         print(f"Preprocess of site {self.name} - {location} to {outdir}")
         preprocess(input_pattern, True, interval=self.INTERVAL, outputdir=outdir,
                    keepvars=self.keep_vars, unzip_path=temppath, time_period=time_period)
@@ -67,23 +69,33 @@ class Gnss_site:
 
 
     def pairing(self, time_period=None):
+        extension = self.get_extension("nc")
+
         pairings = {self.short_name: (self.twr_inport_pattern, self.grnd_inport_pattern)}
-        filepattern = {self.twr_inport_pattern: f'{self.twr_temp_path}\*.nc',
-                       self.grnd_inport_pattern: f'{self.grnd_temp_path}\*.nc'}
+        filepattern = {self.twr_inport_pattern: self.twr_temp_path+extension,
+                       self.grnd_inport_pattern: self.grnd_temp_path+extension}
         outputdir = {self.short_name: self.paired_path}
 
+        logging.info(f"Pairing of site {self.name} - {pairings} between {time_period[0].left} and {time_period[-1].right}")
         print("Pairing: " + str(pairings))
         pair_obs(filepattern, pairings, time_period, outputdir=outputdir, time_period=time_period)
 
 
     def calculate_vod(self, time_periode=None):
-        filepattern = {self.short_name: f'{self.paired_path}\*.nc'}
+        extension = self.get_extension("nc")
+        filepattern = {self.short_name: self.paired_path+extension}
         pairing = {self.short_name: ('S1_ref', 'S1_grn', 'Elevation_grn')}
         outputdir = {self.short_name: self.vod_path}
 
+        logging.info(f"Calculate VOD of site {self.name} between {time_periode[0].left} and {time_periode[-1].right}")
         print(f"Calculate VOD: {filepattern}")
-        result = calc_vod(filepattern, pairing, outputdir)
-
+        result = calc_vod(filepattern, pairing, outputdir, time_periode)
+    
+    def get_extension(self, ext):
+        extension = f"/*.{ext}" # Linux extension
+        if os.name == 'nt':  # 'nt' represents Windows
+            extension = f"\\*.{ext}"
+        return extension
 
     def delete_files(self, directory, extension):
         # List all files in the directory
