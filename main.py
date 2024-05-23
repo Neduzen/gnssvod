@@ -43,6 +43,15 @@ def plot_it():
     path = r"Z:\group\rsws_gnss\VOD\Dav"
     # vod_dav = [xr.open_mfdataset(os.path.join(path, x)).VOD for x in files]
 
+    # path = r"X:\rsws_gnss\VOD\Laeg"
+    # f1 = "vod_Laeg_20230701_20230731.nc"
+    # f2 = "vod_Laeg_20220701_20220731.nc"
+    # # vod_dav1 = xr.open_dataset(os.path.join(path, f1))
+    # # vod_dav2 = xr.open_dataset(os.path.join(path, f2))
+    # vod_dav1.SV
+    # vod_dav2.SV
+
+
     vods = []
     times = []
     for f in files:
@@ -128,7 +137,6 @@ if __name__ == '__main__':
     logging.basicConfig(filename='gnss.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     sites = readConfigIni()
-
     is_preprocessing = False
     is_pairing = False
     is_vod = False
@@ -177,15 +185,18 @@ if __name__ == '__main__':
         gnss_site.preprocess(is_tower, start_date, is_autotime)
     elif is_pairing:
         # start = pd.Timestamp("2022-01-01")
-        timeperiod = pd.interval_range(start=start_date, periods=31, freq='D')
+        end_date = pd.to_datetime(start_date) + pd.offsets.MonthBegin(1)
+        timeperiod = pd.interval_range(start=start_date, end=end_date, freq='D')
         gnss_site.pairing(timeperiod)
     elif is_vod:
         if year is None:
             print("No year defined. Cancel process.")
             print("Define with: '-year 2021'")
         else:
-            year_minus = str(int(year)-1)
-            timeperiod = pd.interval_range(start=pd.Timestamp(f"{year_minus}-12-31 23:59:59"), end=pd.Timestamp(f"{year}-12-31 23:59:59"), freq='ME')
+            year_plus = str(int(year)+1)
+            # timeperiod = pd.interval_range(start=pd.Timestamp(f"{year_minus}-12-31 23:59:59"), end=pd.Timestamp(f"{year}-12-31 23:59:59"), freq='ME')
+            timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
+                                           end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
             gnss_site.calculate_vod(timeperiod)
     elif is_plot:
         # filename = "vod_Dav_20220101_20220201.nc"
