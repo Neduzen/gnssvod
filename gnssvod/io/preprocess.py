@@ -36,7 +36,9 @@ def preprocess(filepattern,
                overwrite=False,
                unzip_path=None,
                outputresult=False,
-               time_period=None):
+               time_period=None,
+               splitter=["_raw"],
+               rename_vars=[]):
     """
     Returns lists of Observation objects containing GNSS observations read from RINEX observation files
     
@@ -89,7 +91,7 @@ def preprocess(filepattern,
 
         # filter files by time period
         if time_period is not None:
-            filelist = filter_filelist(filelist, time_period)
+            filelist = filter_filelist(filelist, time_period, splitter=splitter)
 
         # checking which files will be skipped (if necessary)
         if (not overwrite) and (outputdir is not None):
@@ -118,13 +120,21 @@ def preprocess(filepattern,
                 if x is not None:
                     print(f"Processing {len(x.observation):n} individual observations")
 
+                    # Rename columns
+                    for rc in rename_vars:
+                        x.observation = x.observation.rename(
+                            columns={rc[0]: rc[1]})
+
                     # only keep required vars
                     if keepvars is not None:
                         # only keep rows for which required vars are not NA
-                        x.observation = x.observation.dropna(how='all',subset=keepvars)
+                        x.observation = x.observation.dropna(how='all', subset=keepvars)
                         # subselect only the required vars, + always keep 'epoch' and 'SYSTEM'
-                        x.observation_types = np.unique(np.concatenate((keepvars,['epoch','SYSTEM'])))
+                        x.observation_types = np.unique(np.concatenate((keepvars, ['epoch', 'SYSTEM'])))
                         x.observation = x.observation[x.observation_types]
+
+                    if len(x.observation.epoch) == 0:
+                        raise FileError(f'No observations for the rinex file {filename}.')
 
                     # resample if required
                     if interval is not None:
@@ -143,11 +153,11 @@ def preprocess(filepattern,
                             x, orbit_data = add_azi_ele(x, orbit_data)
 
                     # make sure we drop any duplicates
-                    x.observation=x.observation[~x.observation.index.duplicated(keep='first')]
+                    x.observation = x.observation[~x.observation.index.duplicated(keep='first')]
 
                     # store result in memory
                     if outputresult:
-                        result[i]=x
+                        result[i] = x
 
                     # write to file if required
                     if outputdir is not None:
@@ -193,7 +203,7 @@ def resample_obs(obs,interval):
 def add_azi_ele(obs, orbit_data=None):
     if orbit_data is None:
         do = True
-    elif (orbit_data.my_epoch==obs.epoch) and (orbit_data.my_interval==obs.interval):
+    elif (orbit_data.my_epoch == obs.epoch) and (orbit_data.my_interval == obs.interval):
         # if the orbit for the day corresponding to the epoch and interval is the same as the one that was passed, just reuse it. This drastically reduces the number of times orbit files have to be read and interpolated.
         do = False
     else:
@@ -230,7 +240,7 @@ def get_filelist(filepatterns):
     return filelists
 
 
-def filter_filelist(files, time_period, splitter="raw_"):
+def filter_filelist(files, time_period, splitter=["raw_"]):
     date_min = time_period[0].left
     date_max = time_period[-1].right
     print(f"Filter files between {date_min} and {date_max}")
@@ -238,7 +248,13 @@ def filter_filelist(files, time_period, splitter="raw_"):
     filtered = []
     for f in files:
         try:
-            date_time = pd.to_datetime(f.split(splitter)[1][:10], format='%Y%m%d%H')
+            date_str = None
+            for s in splitter:
+                if s in f:
+                    date_str = f.split(s)[1][:10]
+                else:
+                    continue
+            date_time = pd.to_datetime(date_str, format='%Y%m%d%H')
             if date_min <= date_time < date_max:
                 filtered.append(f)
         except:
@@ -364,7 +380,7 @@ def pair_obs(filepattern, pairings, timeintervals, keepvars=None, outputdir=None
 #----------------- CALCULATING VOD -------------------
 #-------------------------------------------------------------------------- 
 
-def calc_vod(filepattern,pairings, outputdir=None, time_period=None):
+def calc_vod(filepattern, pairings, outputdir=None, time_period=None):
     """
     Combines a list of NetCDF files containing paired GNSS receiver data, calculates VOD and returns that data.
 
@@ -395,11 +411,12 @@ def calc_vod(filepattern,pairings, outputdir=None, time_period=None):
         print(f'Processing {case_name}')
         files = get_filelist({case_name:filepattern[case_name]})
         # Overall interval
-        overall_interval = pd.Interval(left=time_period.min().left, right=time_period.max().right)
+        end_datetime = time_period.max().right-datetime.timedelta(microseconds=1)
+        overall_interval = pd.Interval(left=time_period.min().left, right=end_datetime)
         print(f"Interval: {overall_interval}")
         # # filter files by time period
         if time_period is not None:
-            files[case_name] = filter_filelist(files[case_name], time_period, splitter=f'{case_name}_')
+            files[case_name] = filter_filelist(files[case_name], time_period, splitter=[f'{case_name}_'])
         # read in all data
         data = [xr.open_mfdataset(x).to_dataframe().dropna(how='all') for x in files[case_name]]
         # concatenate
@@ -416,10 +433,13 @@ def calc_vod(filepattern,pairings, outputdir=None, time_period=None):
         # out[varname_vod] = data
 
         # Only keep rows with VOD
+        keep_vars = ["VOD", "epoch_ref", "Azimuth_ref", "Elevation_ref", "SYSTEM_ref"]
+        if keep_vars is not None:
+            data = data[keep_vars].dropna(how='all')
         data = data.dropna(subset=['VOD'])
 
         # split the dataframe into multiple dataframes according to timeintervals
-        out[case_name] = [x for x in data.groupby(pd.cut(data.index.get_level_values('Epoch').tolist(), time_period))]
+        out[case_name] = [x for x in data.groupby(pd.cut(data.index.get_level_values('Epoch').tolist(), time_period, right=False))]
 
         if outputdir:
             outputdir = outputdir[case_name]
@@ -430,8 +450,10 @@ def calc_vod(filepattern,pairings, outputdir=None, time_period=None):
                     os.makedirs(outputdir)
                 print(f'Saving files for {case_name} in {outputdir}')
                 for df in list_of_dfs:
-                    date_s = np.min(df[1].axes[0])[0].strftime("%Y%m%d")
-                    date_e = np.max(df[1].axes[0])[0].strftime("%Y%m%d")
+                    # date_s = np.min(df[1].axes[0])[0].strftime("%Y%m%d")
+                    # date_e = np.max(df[1].axes[0])[0].strftime("%Y%m%d")
+                    date_s = df[0].left.strftime("%Y%m%d")
+                    date_e = (df[0].right - datetime.timedelta(milliseconds=1)).strftime("%Y%m%d")
                     filename = f'vod_{case_name}_{date_s}_{date_e}.nc'
                     # convert dataframe to xarray for saving to netcdf (if df is not empty)
                     if len(df[1]) > 0:

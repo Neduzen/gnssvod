@@ -64,6 +64,8 @@ def tropospheric_delay(x, y, z, elevation, epoch):
         indexLat=4
     elif 75<=abs(lat):
         indexLat=5
+    else:
+        indexLat=0
     # ----------------
     if indexLat == 0:
         ave_meteo  = ave_params[indexLat,:]

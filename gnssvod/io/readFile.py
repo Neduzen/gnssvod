@@ -4,6 +4,7 @@ navigationFile function reads the navigation file
 sp3File function reads the SP3 file
 clockFile function reads the clock file
 """
+import logging
 # ===========================================================
 # ========================= imports =========================
 import os
@@ -193,18 +194,29 @@ def read_obsFile(observationFile, header=False, unzip_path=None):
     if observationFile.endswith(".Z")==True:
         raise Warning("All I/O functions take uncompressed files as an input (remove .Z/.gz from filename) | Next release will include this feature...")
     # check if observationFile exists or not
-    observationFile = isexist(observationFile, delete=False, unzip_path=unzip_path)
+    try:
+        observationFile = isexist(observationFile, delete=False, unzip_path=unzip_path)
+    except ValueError as e:
+        if str(e) == "zip archive is empty":
+            raise FileError(f'Zip archive containing the raw data observation file was empty: {observationFile}')
+        elif str(e) == "empty file":
+            raise FileError(f'The file in zip archive containing the raw data observation file was empty: {observationFile}')
+        elif str(e) == "Zip archive has no .O-file":
+            raise FileError(f'There was no .O - file in the zip archive: {observationFile}')
+        else:
+            raise
     # open file
     f = open(observationFile, errors = 'ignore')
     obsLines = f.readlines()
-    line = 0
-    while True:
+    version = None
+    for line in range(0, len(obsLines)):
         if 'RINEX VERSION / TYPE' in obsLines[line]:
             version = obsLines[line][0:-20].split()[0]
             break
-        else:
-            line += 1
     f.close()
+    if version is None:
+        raise FileError(f'Observation file contained no versioning or was invalid {observationFile}')
+        return None
     if version.startswith("2"):
         return read_obsFile_v2(observationFile,header)
     elif version.startswith("3"):
@@ -219,7 +231,7 @@ def read_obsFile_v2(observationFile,header=False):
     line = 0
     ToB = []
     head = dict()
-    while True:
+    while line < len(obsLines):
         if 'RINEX VERSION / TYPE' in obsLines[line]:
             version = obsLines[line][0:-21].split()[0]
             line += 1
@@ -265,10 +277,10 @@ def read_obsFile_v2(observationFile,header=False):
     obsList = []
     SVList= []
     epochList = []
-    if len(obsLines)==0:
-        print("Obs file had no content except header")
+    if len(obsLines) == 0:
+        raise FileError(f'Obs file had no content except header: {observationFile}.')
         return None
-    while True:
+    while len(obsLines) > 0:
         # --------------------------------------------------------------------------------------
         while True:
             if len(obsLines) == 0:
@@ -347,11 +359,18 @@ def read_obsFile_v2(observationFile,header=False):
         rowNumber = np.ceil(obsNumber/5).astype('int')
         for i in range(0, rowNumber*NoSV, rowNumber): 
             for j in range(0, rowNumber):
+                if i+j >= len(obsLines):
+                    # If file was not complete, stop reading
+                    obsLines=[]
+                    break
                 lineLenght = len(obsLines[i+j])
                 if lineLenght != 80:
                     obsLines[i+j] += ' '*(80-lineLenght)
                 if j!=0:
                     obsLines[i] += obsLines[i+j]
+            if len(obsLines) == 0:
+                # If file was not complete, stop reading
+                break
             obsLines[i] = [float(obsLines[i][j:j+14]) if isfloat(obsLines[i][j:j+14])==True else None for j in range(0, 80*rowNumber, 16)]
             if len(obsLines[i]) != obsNumber:
                 del obsLines[i][-(len(obsLines[i])-obsNumber):]
@@ -359,11 +378,15 @@ def read_obsFile_v2(observationFile,header=False):
             obsEpoch.append(obsLines[i])
         obsList.extend(obsEpoch)
         del obsLines[0:rowNumber*NoSV]
-        if len(obsLines) == 0:
-            break
+        # if len(obsLines) == 0:
+        #     break
     columnNames = ToB[1:]
     columnNames.append('Epoch')
     SVList = [x.replace(' ','0') if x[1]==' ' else x for x in SVList] # replace 'G 1' with 'G01' (etc)
+    if len(SVList) > len(obsList):
+        # If file was not complete, delete the not read ones
+        SVList = SVList[:len(obsList)]
+        logging.warning(f"File error for {observationFile}, not all observations were complete: cut {len(SVList)} to {len(obsList)}")
     observation = pd.DataFrame(obsList, index=SVList, columns=columnNames)
     observation.index.name = 'SV'
     observation['epoch'] = observation.Epoch
@@ -388,6 +411,26 @@ def read_obsFile_v2(observationFile,header=False):
     return Observation(f.name, fileEpoch, observation, approx_position, receiver_type, antenna_type, interval, receiver_clock, version, ToB)
 
 def read_obsFile_v3(obsFileName,header):
+    def get_old_band_names(sv, bands):
+        nbands = ["C1", "L1", "D1", "S1", "C2", "L2", "D2", "S2"]
+        # if sv == "G":
+            # obands = ["C1C", "L1C", "D1C", "S1C", "C2X", "L2X", "D2X", "S2X"]
+        # elif sv == "R":
+            # obands = ["C1C", "L1C", "D1C", "S1C", "C2C", "L2C", "D2C", "S2C"]
+        # elif sv == "E":
+            # obands = ["C1X", "L1X", "D1X", "S1X", "C7X", "L7X", "D7X", "S7X"]
+        # elif sv == "J":
+            # obands = ["C1C", "L1C", "D1C", "S1C", "C2X", "L2X", "D2X", "S2X"]
+        if sv == "S":
+        #     obands = ["C1C", "L1C", "D1C", "S1C"]
+            nbands = ["C1", "L1", "D1", "S1"]
+        # elif sv == "C":
+        #     obands = ["C2I", "L2I", "D2I", "S2I", "C7I", "L7I", "D7I", "S7I"]
+        if len(bands) == len(nbands):
+            return nbands
+        else:
+            Exception("ERROR at bands of rinex")
+
     start = time.time() # Time of start
 
     if obsFileName.endswith("crx"): obsFileName = obsFileName.split(".")[0] + ".rnx"
@@ -425,6 +468,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_GPS = int(obsTypes[1])
                 ToB_GPS = obsTypes[2:]
+                ToB_GPS = get_old_band_names("G", ToB_GPS)
                 line += 1
                 if obsNumber_GPS > 13:
                     for _ in range(int(np.ceil(obsNumber_GPS/13))-1):
@@ -434,6 +478,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_GLONASS = int(obsTypes[1])
                 ToB_GLONASS = obsTypes[2:]
+                ToB_GLONASS = get_old_band_names("R", ToB_GLONASS)
                 line += 1
                 if obsNumber_GLONASS > 13:
                     for _ in range(int(np.ceil(obsNumber_GLONASS/13))-1):
@@ -443,6 +488,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_GALILEO = int(obsTypes[1])
                 ToB_GALILEO = obsTypes[2:]
+                ToB_GALILEO = get_old_band_names("E", ToB_GALILEO)
                 line += 1
                 if obsNumber_GALILEO > 13:
                     for _ in range(int(np.ceil(obsNumber_GALILEO/13))-1):
@@ -452,6 +498,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_COMPASS = int(obsTypes[1])
                 ToB_COMPASS = obsTypes[2:]
+                ToB_COMPASS = get_old_band_names("C", ToB_COMPASS)
                 line += 1
                 if obsNumber_COMPASS > 13:
                     for _ in range(int(np.ceil(obsNumber_COMPASS/13))-1):
@@ -461,6 +508,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_QZSS = int(obsTypes[1])
                 ToB_QZSS = obsTypes[2:]
+                ToB_QZSS = get_old_band_names("G", ToB_QZSS)
                 line += 1
                 if obsNumber_QZSS > 13:
                     for _ in range(int(np.ceil(obsNumber_QZSS/13))-1):
@@ -470,6 +518,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_IRSS = int(obsTypes[1])
                 ToB_IRSS = obsTypes[2:]
+                ToB_IRSS = get_old_band_names("I", ToB_IRSS)
                 line += 1
                 if obsNumber_IRSS > 13:
                     for _ in range(int(np.ceil(obsNumber_IRSS/13))-1):
@@ -479,6 +528,7 @@ def read_obsFile_v3(obsFileName,header):
                 obsTypes = obsLines[line][0:obsLines[line].index('SYS')].split()
                 obsNumber_SBAS = int(obsTypes[1])
                 ToB_SBAS = obsTypes[2:]
+                ToB_SBAS = get_old_band_names("S", ToB_SBAS)
                 line += 1
                 if obsNumber_SBAS > 13:
                     for _ in range(int(np.ceil(obsNumber_SBAS/13))-1):

@@ -1,6 +1,7 @@
 # ===========================================================
 # ========================= imports =========================
 import numpy as _np
+import math
 # ===========================================================
 __all__ = ["ell2cart", "cart2ell","ell2topo"]
 
@@ -48,7 +49,7 @@ def cart2ell(x, y, z, ellipsoid = 'GRS80'):
     N_init = ellipsoid.a # initial value of prime vertical radius N
     h_init = _np.sqrt(x**2 + y**2 + z**2) - _np.sqrt(ellipsoid.a * ellipsoid.b)
     lat_init = _np.arctan2(z, (1 - N_init * ellipsoid.e1**2 / (N_init + h_init)) * p)
-    while True:
+    while not math.isnan(lat_init):
         N = ellipsoid.a / _np.sqrt(1-(ellipsoid.e1**2 * _np.sin(lat_init)**2))
         h = (p / _np.cos(lat_init)) - N
         lat = _np.arctan2(z, (1 - N * ellipsoid.e1**2 / (N + h)) * p)

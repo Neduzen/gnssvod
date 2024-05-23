@@ -15,6 +15,7 @@ class Gnss_site:
         self.vod_path = site["vod_path"]
         self.paired_path = site["paired_path"]
         self.date_next = site["date_next"]
+        self.splitter_raw = site["splitter_raw"].split("&")
 
         self.grnd_inport_pattern = site["grnd_inport_pattern"]
         self.grnd_raw_path = site["grnd_raw_path"]
@@ -24,8 +25,11 @@ class Gnss_site:
         self.twr_raw_path = site["twr_raw_path"]
         self.twr_temp_path = site["twr_temp_path"]
 
-        # Keep vars
-        self.keep_vars  = site["keep_vars"].split("-")
+        # Handle variables
+        self.keep_vars = site["keep_vars"].split("-")
+        self.rename_vars = []
+        for v in site["rename_vars"].split("-"):
+            self.rename_vars.append(v.split("&"))
         self.pairing_vars = site["pairing_vars"].split("-")
 
 
@@ -55,8 +59,8 @@ class Gnss_site:
 
         logging.info(f"Preprocess of site {self.name} - {location} to {outdir} between {time_period[0].left} and {time_period[-1].right}")
         print(f"Preprocess of site {self.name} - {location} to {outdir}")
-        preprocess(input_pattern, True, interval=self.INTERVAL, outputdir=outdir,
-                   keepvars=self.keep_vars, unzip_path=temppath, time_period=time_period)
+        preprocess(input_pattern, True, interval=self.INTERVAL, outputdir=outdir, rename_vars=self.rename_vars,
+                   keepvars=self.keep_vars, unzip_path=temppath, time_period=time_period, splitter=self.splitter_raw)
 
         extension = '.rnx'
         self.delete_files(temppath, extension)
@@ -76,6 +80,12 @@ class Gnss_site:
                        self.grnd_inport_pattern: self.grnd_temp_path+extension}
         outputdir = {self.short_name: self.paired_path}
 
+        keep_vars = self.keep_vars
+        # keep_vars = []
+        # for pair_var in pair_vars:
+        #     keep_vars.append(pair_var+"_ref")
+        #     keep_vars.append(pair_var + "_grn")
+
         logging.info(f"Pairing of site {self.name} - {pairings} between {time_period[0].left} and {time_period[-1].right}")
         print("Pairing: " + str(pairings))
         pair_obs(filepattern, pairings, time_period, outputdir=outputdir, time_period=time_period)
@@ -84,8 +94,9 @@ class Gnss_site:
     def calculate_vod(self, time_periode=None):
         extension = self.get_extension("nc")
         filepattern = {self.short_name: self.paired_path+extension}
-        pairing = {self.short_name: ('S1_ref', 'S1_grn', 'Elevation_grn')}
+        # pairing = {self.short_name: ('S1_ref', 'S1_grn', 'Elevation_grn')}
         outputdir = {self.short_name: self.vod_path}
+        pairing = {self.short_name: (self.pairing_vars)}
 
         logging.info(f"Calculate VOD of site {self.name} between {time_periode[0].left} and {time_periode[-1].right}")
         print(f"Calculate VOD: {filepattern}")
@@ -133,3 +144,34 @@ class Gnss_site:
         new_value = new_date.strftime("%Y-%m-%d")
 
         overwrite_config_line(config_path, section, option, new_value)
+        
+        
+    
+    def combine_to_new(self):
+        nc_root_path=r"Z:\group\rsws_gnss\Paired\Laeg\Laeg_20210417000000_20210418000000.nc"
+
+        gnssd = xr.open_dataset(nc_root_path, mode='r', engine='netcdf4')
+
+
+        # Concatenate S1a and S1b along a new dimension 'station'
+        s1_combined = xr.concat([gnssd['S1_ref'], gnssd['S1_grn']], dim='station')
+        s1_combined['station'] = ['ref', 'grn']
+        s2_combined = xr.concat([gnssd['S2_ref'], gnssd['S2_grn']], dim='station')
+        s2_combined['station'] = ['ref', 'grn']
+        sys_combined = xr.concat([gnssd['SYSTEM_ref'], gnssd['SYSTEM_grn']], dim='station')
+        sys_combined['station'] = ['ref', 'grn']
+        ele_combined = xr.concat([gnssd['Elevation_ref'], gnssd['Elevation_grn']], dim='station')
+        ele_combined['station'] = ['ref', 'grn']
+        azi_combined = xr.concat([gnssd['Azimuth_ref'], gnssd['Azimuth_grn']], dim='station')
+        azi_combined['station'] = ['ref', 'grn']
+
+        # Update dimension coordinates
+        S1 = xr.DataArray(s1_combined, dims=('station', 'Epoch', 'SV'), name='S1')
+        S2 = xr.DataArray(s2_combined, dims=('station', 'Epoch', 'SV'), name='S2')
+        ele = xr.DataArray(ele_combined, dims=('station', 'Epoch', 'SV'), name='Elevation')
+        azi = xr.DataArray(azi_combined, dims=('station', 'Epoch', 'SV'), name='Azimuth')
+        sys = xr.DataArray(sys_combined, dims=('station', 'Epoch', 'SV'), name='SYSTEM')
+
+        # Combine DataArrays into one Dataset
+        ds_combined = xr.merge([S1, S2, ele, azi, sys])
+        return ds_combined
