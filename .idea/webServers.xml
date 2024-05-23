@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="7ebe38cf-fe4d-4611-8a77-94681ad76069" name="Z:\data\flox\software" url="http://localhost">
+        <fileTransfer mountedRoot="Z:\data\flox\software" accessType="MOUNT" port="0" />
+      </webServer>
+    </option>
+  </component>
+</project>
