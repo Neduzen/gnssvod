@@ -1,7 +1,6 @@
 import os.path
 import sys
 from gnssvod.Gnss_site import Gnss_site
-from gnssvod.io.preprocess import (preprocess, get_filelist, pair_obs, calc_vod)
 import pandas as pd
 import configparser
 import xarray as xr
@@ -136,16 +135,21 @@ if __name__ == '__main__':
     # Setup logging
     logging.basicConfig(filename='gnss.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+    # Initialize
     sites = readConfigIni()
+    # Program mode
     is_preprocessing = False
     is_pairing = False
     is_vod = False
+    is_timeseries = False
+    is_product = False
+    is_plot = False
+    # Program parameters
     is_tower = False
     is_ground = False
     site = None
     start_date = None
     is_autotime = False
-    is_plot = False
     year = None
 
     # Load console
@@ -161,6 +165,10 @@ if __name__ == '__main__':
             site = args[i + 1]
         if arg == '-plot':
             is_plot = True
+        if arg == '-product':
+            is_product = True
+        if arg == '-timeseries':
+            is_timeseries = True
         if arg == '-dates':
             if args[i+1] == "auto":
                 is_autotime = True
@@ -198,6 +206,14 @@ if __name__ == '__main__':
             timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
                                            end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
             gnss_site.calculate_vod(timeperiod)
+    elif is_timeseries:
+        if year is None:
+            print("No year defined. Cancel process.")
+            print("Define with: '-year 2021'")
+        else:
+            gnss_site.create_timeseries(year)
+    elif is_product:
+        gnss_site.create_product()
     elif is_plot:
         # filename = "vod_Dav_20220101_20220201.nc"
         # vod_dav = xr.open_dataset(fr'Z:\group\rsws_gnss\VOD\Dav\{filename}')
@@ -206,7 +222,18 @@ if __name__ == '__main__':
         # orbit = {"Azimuth": vod_dav.Azimuth_ref, "Elevation": vod_dav.Elevation_ref}
         # sv_list = vod_dav.SV
         # gnssvod.plot.azelplot(station, orbit, SVlist=sv_list)
-        plot_it()
+        # plot_it()
+        # timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
+        #                                end=pd.Timestamp(f"{year}-12-31 00:00:00"), freq='MS')
+        year_plus = str(int(year) + 1)
+        # timeperiod = pd.interval_range(start=pd.Timestamp(f"{year_minus}-12-31 23:59:59"), end=pd.Timestamp(f"{year}-12-31 23:59:59"), freq='ME')
+        timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
+                                       end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
+        if year is None:
+            print("No year defined. Cancel process.")
+            print("Define with: '-year 2021'")
+        else:
+            gnss_site.plot_timeseries(year)
 
     else:
         print("No mode")

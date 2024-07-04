@@ -46,7 +46,7 @@ def sp3_interp_fast(start_time, end_time, interval=30, poly_degree=16, sp3_produ
 
         # only process if a minimum of 4 orbit data points are present
         if len(sp3_temp)>3:
-            sp3_temp_resampled = sp3_temp.resample(f"{interval}S")
+            sp3_temp_resampled = sp3_temp.resample(f"{interval}s")
             sp3_temp_resampled = sp3_temp_resampled.interpolate(method='cubic')
             # recalculate V taking into account sampling rate
             sp3_temp_resampled['Vx']=-sp3_temp_resampled['X'].diff(periods=-1)/interval
@@ -68,7 +68,7 @@ def sp3_interp_fast(start_time, end_time, interval=30, poly_degree=16, sp3_produ
         clock_temp = clock.xs(sv,level='SV')
         # only process if a minimum of 4 clock data points are present
         if len(clock_temp)>3:
-            clock_temp_resampled = clock_temp.resample(f"{interval}S")
+            clock_temp_resampled = clock_temp.resample(f"{interval}s")
             clock_temp_resampled = clock_temp_resampled.interpolate(method='cubic')
             clock_resampled.append(clock_temp_resampled)
 

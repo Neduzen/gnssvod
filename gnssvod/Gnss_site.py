@@ -4,8 +4,11 @@ import logging
 import os
 import sys
 import datetime as datetime
-from gnssvod.io.preprocess import (preprocess, get_filelist, pair_obs, calc_vod)
+from gnssvod.io.preprocess import (preprocess, get_filelist, gather_stations)
 import pandas as pd
+from gnssvod.analysis.vod_calc import calc_vod
+import gnssvod.plots.VOD_timeseries as vod_timeseries
+import gnssvod.plots.VOD_plots as vod_plots
 
 class Gnss_site:
     def __init__(self, site):
@@ -13,7 +16,12 @@ class Gnss_site:
         self.name = site["name"]
         self.short_name = site["shortname"]
         self.vod_path = site["vod_path"]
+        self.vod_baseline_path = site["baseline_path"]
+        self.vod_timeseries_path = site["timeseries_path"]
+        self.vod_product_path = site["product_path"]
+        self.baseline_days = site["baseline_days"]
         self.paired_path = site["paired_path"]
+        self.plot_path = site["plot_path"]
         self.date_next = site["date_next"]
         self.splitter_raw = site["splitter_raw"].split("&")
 
@@ -27,10 +35,6 @@ class Gnss_site:
 
         # Handle variables
         self.keep_vars = site["keep_vars"].split("-")
-        self.rename_vars = []
-        for v in site["rename_vars"].split("-"):
-            self.rename_vars.append(v.split("&"))
-        self.pairing_vars = site["pairing_vars"].split("-")
 
 
     INTERVAL = "60s"
@@ -59,7 +63,7 @@ class Gnss_site:
 
         logging.info(f"Preprocess of site {self.name} - {location} to {outdir} between {time_period[0].left} and {time_period[-1].right}")
         print(f"Preprocess of site {self.name} - {location} to {outdir}")
-        preprocess(input_pattern, True, interval=self.INTERVAL, outputdir=outdir, rename_vars=self.rename_vars,
+        preprocess(input_pattern, True, interval=self.INTERVAL, outputdir=outdir,
                    keepvars=self.keep_vars, unzip_path=temppath, time_period=time_period, splitter=self.splitter_raw)
 
         extension = '.rnx'
@@ -87,20 +91,22 @@ class Gnss_site:
         #     keep_vars.append(pair_var + "_grn")
 
         logging.info(f"Pairing of site {self.name} - {pairings} between {time_period[0].left} and {time_period[-1].right}")
-        print("Pairing: " + str(pairings))
-        pair_obs(filepattern, pairings, time_period, outputdir=outputdir, time_period=time_period)
+        print(f"Pairing of site {self.name}")
+        print(f"{pairings} between {time_period[0].left} and {time_period[-1].right}")
+        gather_stations(filepattern, pairings, time_period, outputdir=outputdir) #, time_period=time_period)
+        #def gather_stations(filepattern, pairings, timeintervals, keepvars=None, outputdir=None, compress=True):
 
 
     def calculate_vod(self, time_periode=None):
         extension = self.get_extension("nc")
         filepattern = {self.short_name: self.paired_path+extension}
-        # pairing = {self.short_name: ('S1_ref', 'S1_grn', 'Elevation_grn')}
         outputdir = {self.short_name: self.vod_path}
-        pairing = {self.short_name: (self.pairing_vars)}
+        pairing = {self.short_name: (self.twr_inport_pattern, self.grnd_inport_pattern)}
+        bands = {self.short_name: self.keep_vars}
 
         logging.info(f"Calculate VOD of site {self.name} between {time_periode[0].left} and {time_periode[-1].right}")
         print(f"Calculate VOD: {filepattern}")
-        result = calc_vod(filepattern, pairing, outputdir, time_periode)
+        result = calc_vod(filepattern, pairing, bands, time_periode, outputdir)
     
     def get_extension(self, ext):
         extension = f"/*.{ext}" # Linux extension
@@ -145,33 +151,32 @@ class Gnss_site:
 
         overwrite_config_line(config_path, section, option, new_value)
         
-        
-    
-    def combine_to_new(self):
-        nc_root_path=r"Z:\group\rsws_gnss\Paired\Laeg\Laeg_20210417000000_20210418000000.nc"
 
-        gnssd = xr.open_dataset(nc_root_path, mode='r', engine='netcdf4')
+    def create_timeseries(self, year):
+        print(f"Create VOD times series")
+        in_path = {self.short_name: self.vod_path}
+        out_baseline_path = {self.short_name: self.vod_baseline_path}
+        out_timeseries_path = {self.short_name: self.vod_timeseries_path}
+
+        result = vod_timeseries.calc_timeseries(in_path, year, int(self.baseline_days), out_baseline_path, out_timeseries_path)
 
 
-        # Concatenate S1a and S1b along a new dimension 'station'
-        s1_combined = xr.concat([gnssd['S1_ref'], gnssd['S1_grn']], dim='station')
-        s1_combined['station'] = ['ref', 'grn']
-        s2_combined = xr.concat([gnssd['S2_ref'], gnssd['S2_grn']], dim='station')
-        s2_combined['station'] = ['ref', 'grn']
-        sys_combined = xr.concat([gnssd['SYSTEM_ref'], gnssd['SYSTEM_grn']], dim='station')
-        sys_combined['station'] = ['ref', 'grn']
-        ele_combined = xr.concat([gnssd['Elevation_ref'], gnssd['Elevation_grn']], dim='station')
-        ele_combined['station'] = ['ref', 'grn']
-        azi_combined = xr.concat([gnssd['Azimuth_ref'], gnssd['Azimuth_grn']], dim='station')
-        azi_combined['station'] = ['ref', 'grn']
+    def create_product(self):
+        print(f"Create VOD product")
+        in_path = {self.short_name: self.vod_timeseries_path}
+        out_path = {self.short_name: self.vod_product_path}
+        hour_frequency = 1
 
-        # Update dimension coordinates
-        S1 = xr.DataArray(s1_combined, dims=('station', 'Epoch', 'SV'), name='S1')
-        S2 = xr.DataArray(s2_combined, dims=('station', 'Epoch', 'SV'), name='S2')
-        ele = xr.DataArray(ele_combined, dims=('station', 'Epoch', 'SV'), name='Elevation')
-        azi = xr.DataArray(azi_combined, dims=('station', 'Epoch', 'SV'), name='Azimuth')
-        sys = xr.DataArray(sys_combined, dims=('station', 'Epoch', 'SV'), name='SYSTEM')
+        result = vod_timeseries.calc_product(in_path, self.baseline_days, hour_frequency, out_path)
 
-        # Combine DataArrays into one Dataset
-        ds_combined = xr.merge([S1, S2, ele, azi, sys])
-        return ds_combined
+
+
+    def plot_timeseries(self, year, time_periode=None):
+        print(f"Plot VOD times series")
+        timeseries_path = {self.short_name: self.vod_timeseries_path}
+        product_path = {self.short_name: self.vod_product_path}
+
+        out_path = {self.short_name: self.plot_path}
+        #t_path = r'X:\rsws_gnss\VOD_timeseries_live/Lae_VOD_timeseries_bl15days_2023.nc'
+        result = vod_plots.do_plot(timeseries_path, product_path, year, out_path)
+

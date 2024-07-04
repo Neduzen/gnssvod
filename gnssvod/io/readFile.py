@@ -440,7 +440,7 @@ def read_obsFile_v3(obsFileName,header):
 
     line = 0
     ToB_GPS,ToB_GLONASS,ToB_GALILEO,ToB_COMPASS,ToB_QZSS,ToB_IRSS,ToB_SBAS = [], [], [], [], [], [], []
-    while True:
+    while line < len(obsLines):
         if 'RINEX VERSION / TYPE' in obsLines[line]:
             version = obsLines[line][0:-21].split()[0]
             line += 1
@@ -568,7 +568,12 @@ def read_obsFile_v3(obsFileName,header):
     epochList = []
     currentline = 0
     last_update = start
-    while True:
+
+    # If file has no observation, throw error
+    if len(obsLines) == 0:
+        raise FileError(f'Obs file had no content except header: {obsFileName}.')
+
+    while len(obsLines) > 0:
         if time.time()-last_update>30:
             # print an update on the progress every 30 seconds
             last_update = time.time()

@@ -39,8 +39,7 @@ def preprocess(filepattern,
                outputresult=False,
                time_period=None,
                splitter=["_raw"],
-               compress=True,
-               rename_vars=[])
+               compress=True):
     """
     Returns lists of Observation objects containing GNSS observations read from RINEX observation files
     
@@ -121,63 +120,73 @@ def preprocess(filepattern,
                     print(f"{out_name} already exists, skipping.. (pass overwrite=True to overwrite)")
                     continue # skip remainder of loop and go directly to next filename
 
-            # only keep required vars
-            if keepvars is not None:
-                x.observation = subset_vars(x.observation,keepvars)
-                # update the observation_types list
-                x.observation_types = x.observation.columns.to_list()
-                
-            # resample if required
-            if interval is not None:
-                x = resample_obs(x,interval)
-                
-            # calculate Azimuth and Elevation if required
-            if orbit:
-                print(f"Calculating Azimuth and Elevation")
-                # note: orbit cannot be parallelized easily because it 
-                # downloads and unzips third-party files in the current directory
-                if not 'orbit_data' in locals():
-                    # if there is no previous orbit data, the orbit data is returned as well
-                    x, orbit_data = add_azi_ele(x)
-                else:
-                    # on following iterations the orbit data is tentatively recycled to reduce computational time
-                    x, orbit_data = add_azi_ele(x, orbit_data)
-            
-            # make sure we drop any duplicates
-            x.observation=x.observation[~x.observation.index.duplicated(keep='first')]
-            
-            # store result in memory
-            if outputresult:
-                result.append(x)
-                
-            # write to file if required
-            if outputdir is not None:
-                ioutputdir = outputdir[station_name]
-                # check that the output directory exists
-                if not os.path.exists(ioutputdir):
-                    os.makedirs(ioutputdir)
-                # delete file if it exists
-                out_path = os.path.join(ioutputdir,out_name)
-                if os.path.exists(out_path):
-                    os.remove(out_path)
-                # save as NetCDF
-                ds = x.observation.to_xarray()
-                ds.attrs['filename'] = x.filename
-                ds.attrs['observation_types'] = x.observation_types
-                ds.attrs['epoch'] = x.epoch.isoformat()
-                ds.attrs['approx_position'] = x.approx_position
-                if compress:
-                    enc = {"dtype": "int16", "scale_factor": 0.1, "zlib": True, "_FillValue":-9999}
-                    to_compress = [fnmatch.fnmatch(x,'S??') | 
-                                   fnmatch.fnmatch(x,'S?') | 
-                                   fnmatch.fnmatch(x,'Azimuth') | 
-                                   fnmatch.fnmatch(x,'Elevation') for x in list(ds.keys())]
-                    encodings = {x:enc for x in np.array(list(ds.keys()))[to_compress]}
-                    ds.to_netcdf(out_path,encoding=encodings)
-                else:
-                    ds.to_netcdf(out_path)
-                print(f"Saved {len(x.observation):n} individual observations in {out_name}")
-                
+                # read in the file (save to other folder location)
+                x = read_obsFile(filename, unzip_path=unzip_path)
+                print(f"Processing {len(x.observation):n} individual observations")
+
+                # If no observations are available raise error
+                if len(x.observation.epoch) == 0:
+                    raise FileError(f'No observations for the rinex file {filename}.')
+
+                # only keep required vars
+                if keepvars is not None:
+                    x.observation = subset_vars(x.observation,keepvars)
+                    # update the observation_types list
+                    x.observation_types = x.observation.columns.to_list()
+
+                # resample if required
+                if interval is not None:
+                    x = resample_obs(x,interval)
+
+                # calculate Azimuth and Elevation if required
+                if orbit:
+                    print(f"Calculating Azimuth and Elevation")
+                    # note: orbit cannot be parallelized easily because it
+                    # downloads and unzips third-party files in the current directory
+                    if not 'orbit_data' in locals():
+                        # if there is no previous orbit data, the orbit data is returned as well
+                        x, orbit_data = add_azi_ele(x)
+                    else:
+                        # on following iterations the orbit data is tentatively recycled to reduce computational time
+                        x, orbit_data = add_azi_ele(x, orbit_data)
+
+                # make sure we drop any duplicates
+                x.observation = x.observation[~x.observation.index.duplicated(keep='first')]
+
+                # store result in memory
+                if outputresult:
+                    result.append(x)
+
+                # write to file if required
+                if outputdir is not None:
+                    ioutputdir = outputdir[station_name]
+                    # check that the output directory exists
+                    if not os.path.exists(ioutputdir):
+                        os.makedirs(ioutputdir)
+                    # delete file if it exists
+                    out_path = os.path.join(ioutputdir,out_name)
+                    if os.path.exists(out_path):
+                        os.remove(out_path)
+                    # save as NetCDF
+                    ds = x.observation.to_xarray()
+                    ds.attrs['filename'] = x.filename
+                    ds.attrs['observation_types'] = x.observation_types
+                    ds.attrs['epoch'] = x.epoch.isoformat()
+                    ds.attrs['approx_position'] = x.approx_position
+                    if compress:
+                        enc = {"dtype": "int16", "scale_factor": 0.1, "zlib": True, "_FillValue":-9999}
+                        to_compress = [fnmatch.fnmatch(x,'S??') |
+                                       fnmatch.fnmatch(x,'S?') |
+                                       fnmatch.fnmatch(x,'Azimuth') |
+                                       fnmatch.fnmatch(x,'Elevation') for x in list(ds.keys())]
+                        encodings = {x:enc for x in np.array(list(ds.keys()))[to_compress]}
+                        ds.to_netcdf(out_path,encoding=encodings)
+                    else:
+                        ds.to_netcdf(out_path)
+                    print(f"Saved {len(x.observation):n} individual observations in {out_name}")
+            except FileError as ex:
+                logging.error(f"File error for {out_name} while execution and not successfully processed: {ex}")
+                print(f"Warning for file {out_name} while execution and not successfully processed: {ex}")
         # store station in memory if required
         if outputresult:
             out[station_name]=result
@@ -259,7 +268,7 @@ def get_filelist(filepatterns):
         station_name = item[0]
         search_pattern = item[1]
         flist = glob.glob(search_pattern)
-        if len(flist)==0:
+        if len(flist) == 0:
             print(f"Could not find any files matching the pattern {search_pattern}")
         filelists[station_name] = flist
     return filelists
@@ -348,16 +357,18 @@ def gather_stations(filepattern,pairings,timeintervals,keepvars=None,outputdir=N
         filenames = get_filelist(filepattern)
         iout = []
         for station_name in station_names:
+            # Filter filename to only include those within the date range
+            filtered_filenames = filter_filelist(filenames[station_name], timeintervals, splitter=['raw_'])
             # get Epochs from all files
-            epochs = [xr.open_mfdataset(x).Epoch for x in filenames[station_name]]
-            # check which files have data that overlaps with the desired time intervals
-            isin = [overall_interval.overlaps(pd.Interval(left=pd.Timestamp(x.values.min()),
-                                                          right=pd.Timestamp(x.values.max()))) for x in epochs]
-            print(f'Found {sum(isin)} files for {station_name}')
+            # epochs = [xr.open_mfdataset(x).Epoch for x in filtered_filenames]
+            # # # check which files have data that overlaps with the desired time intervals
+            # isin = [overall_interval.overlaps(pd.Interval(left=pd.Timestamp(x.values.min()),
+            #                                               right=pd.Timestamp(x.values.max()))) for x in epochs]
+            # print(f'Found {sum(isin)} files for {station_name}')
             print(f'Reading')
             # open those files and convert them to pandas dataframes
             idata = [xr.open_mfdataset(x).to_dataframe().dropna(how='all') \
-                    for x in np.array(filenames[station_name])[isin]]
+                    for x in np.array(filtered_filenames)]
             # concatenate, drop duplicates and sort the dataframes
             idata = pd.concat(idata)
             idata = idata[~idata.index.duplicated()].sort_index(level=['Epoch','SV'])
@@ -370,7 +381,7 @@ def gather_stations(filepattern,pairings,timeintervals,keepvars=None,outputdir=N
         if keepvars is not None:
             iout = subset_vars(iout,keepvars,force_epoch_system=False)
         # split the dataframe into multiple dataframes according to timeintervals
-        out[case_name] = [x for x in iout.groupby(pd.cut(iout.index.get_level_values('Epoch').tolist(), time_period))]
+        out[case_name] = [x for x in iout.groupby(pd.cut(iout.index.get_level_values('Epoch').tolist(), timeintervals))]
         
     # output the files
     if outputdir:
