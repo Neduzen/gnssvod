@@ -10,6 +10,8 @@ import os.path
 import gnssvod.hemistats.hemistats as hemistats
 import glob
 import re
+
+import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 import xarray as xr
@@ -36,7 +38,8 @@ def index_data_files(in_path, station_name, mode="date"):
 
     # Get all files
     if mode == "all":
-        return files
+        file_dates = pd.DataFrame({'File': files, 'Year': "All"})
+        return file_dates
 
     # Get annual files
     if mode == "annual":
@@ -64,6 +67,23 @@ def index_data_files(in_path, station_name, mode="date"):
 
     return file_dates
 
+
+def filter_index_files(df_files, baseline="", year="", text="", notincluded=""):
+    valid = []
+    for df in df_files.iterrows():
+        f = df[1]["File"]
+        valid_i = True
+        if baseline != "" and f'bl{baseline}' not in f and f'baseline_{baseline}' not in f:
+            valid_i = False
+        if notincluded in f:
+            valid_i = False
+        if text not in f:
+            valid_i = False
+        if year != "" and df[1]["File"] != "All" and df[1]["Year"] != year:
+            valid_i = False
+        valid.append(valid_i)
+
+    return df_files[valid].reset_index(drop=True)
 
 # --------------------
 # Define time period
@@ -115,11 +135,8 @@ def open_data(filepath):
     """
     # Load the processed VOD data set
     ds = xr.open_dataset(filepath)
-
     # Convert the xarray to a pandas data frame, sorted by Epoch and satellite (Coordinates of ds). All Data variables of
-    # ds_new are now columns in the data frame.
     df = ds.to_dataframe().dropna(how='all').reorder_levels(['Epoch', 'SV']).sort_index()
-
     # Subset the columns that we need
     df_new = df[['VOD', 'Azimuth', 'Elevation']]
 
@@ -167,6 +184,7 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
 
     # Track the number of skipped days with no baseline
     skipped_days = 0
+    open_matching_files = ""
 
     # Loop through the time period
     for day in timeperiod:
@@ -184,51 +202,44 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
         matching_row = file_dates[is_between]  # Get the matching row(s)
 
         if not matching_row.empty:
-            print(f'Opening {len(matching_row)} file(s) for baseline around day {day.left}')
-
-            # Generate a list to store the opened files
-            data_list = []
-
-            # Open the file paths in the matching rows
-            for i in range(0, len(matching_row)):
-                # print(f'Opening file(s): {matching_row["File"].iloc[i]}.')
-                file = open_data(matching_row['File'].iloc[i])
-                data_list.append(file)
-
-            # Concat the two dataframes together
-            df = pd.concat(data_list)
+            # If vod-raw files not yet open, open them
+            if matching_row['File'].str.cat(sep=' ') != open_matching_files:
+                open_matching_files = matching_row['File'].str.cat(sep=' ')
+                print(f'Opening {len(matching_row)} file(s) for baseline around day {day.left}')
+                # Generate a list to store the opened files
+                data_list = []
+                # Open the file paths in the matching rows
+                for i in range(0, len(matching_row)):
+                    # print(f'Opening file(s): {matching_row["File"].iloc[i]}.')
+                    file = open_data(matching_row['File'].iloc[i])
+                    data_list.append(file)
+                # Concat the two dataframes together
+                df = pd.concat(data_list)
 
             # Select a subset of df based on the baseline
             subset_df = df.loc[(slice(baseline_starday, baseline_endday),), :]
 
             # Check if the subset has values (here one could also set another threshold for min. days in baseline)
             if not subset_df.empty:
-
                 # Calculate the VOD average per cell in hemisphere based on the baseline interval
                 print('Calculating the baseline VOD.')
-
                 # Initialize hemispheric grid
                 hemi = hemistats.hemibuild(2)
-
+                mean = np.nanmean(subset_df["VOD"])
                 # Classify vod data into grid cells and drop the azm und ele columns after
                 vod = hemi.add_CellID(subset_df, aziname='Azimuth', elename='Elevation').drop(
                     columns=['Azimuth', 'Elevation'])
 
                 # Get mean, std and count values per grid cell
                 vod_avg = vod.groupby(['CellID']).agg(['mean', 'std', 'count'])
-
                 # Flatten the columns
                 vod_avg.columns = ["_".join(x) for x in vod_avg.columns.to_flat_index()]
-
                 # Generate a date object based on 'day'
-                start_ts = day.left
-                date_obj = start_ts.date()
-
+                date_obj = day.left.date()
                 # Add the date object to a DataFrame column
-                vod_avg['Day'] = date_obj
-
-                # Convert to DateTime
-                vod_avg['Day'] = pd.to_datetime(vod_avg['Day'])
+                vod_avg['Day'] = pd.to_datetime(date_obj)
+                # Add mean of all measurements within the baseline of a day
+                vod_avg['VOD_all_mean'] = mean
 
                 # Creating multiindex data frame
                 new_index = pd.MultiIndex.from_tuples([(date, cell_id) for cell_id, date in zip(vod_avg.index, vod_avg['Day'])])
@@ -237,11 +248,9 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
 
                 # Add the generated baseline file to the list
                 daily_data.append(vod_avg)
-
             else:
                 print(f'Not enough data for baseline on day {day.left}. Skipping...')
                 skipped_days += 1
-
         else:
             print(f'No matching file(s) for day: {day.left}')
 
@@ -249,7 +258,6 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
 
     # Combine VOD baseline dfs
     VOD_baseline = pd.concat(daily_data, axis=0)
-
     # Drop the 'Day' column again?
     VOD_baseline = VOD_baseline.drop(columns=['Day'])
 
@@ -258,13 +266,10 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
         ds = xr.Dataset.from_dataframe(VOD_baseline) # change to xarray
         comp = dict(zlib=True, complevel=5)
         encoding = {var: comp for var in ds.data_vars}
-
-        # Save as NetCDF file
         filepath = os.path.join(out_path, bl_name + '.nc')
         print(f'Writing the baseline VOD file to {filepath}')
         ds.to_netcdf(filepath, format="NETCDF4", engine="netcdf4", encoding=encoding)
 
-    return VOD_baseline
 
 # --------------------
 # Calculate time series
@@ -302,9 +307,13 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
         """
     print(f"Calculate VOD time series of {timeperiod}")
 
+    bl_data = bl_data.rename(columns={"VOD_mean": "bl_VOD_mean",
+                                      "VOD_count": "bl_VOD_count",
+                                      "VOD_std": "bl_VOD_std",
+                                      "VOD_all_mean": "bl_VOD_all_mean"})
     # Generate a list to store the daily anomaly dfs
     daily_vod_anom = []
-
+    open_vod_raw_file = ""
     # Track the number of skipped days with no data
     skipped_days = 0
 
@@ -317,63 +326,51 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
         # Check if the day is between the StartDT and EndDT of any file
         matching_row = file_dates[is_between]  # Get the matching row(s)
 
-        if not matching_row.empty:
-            print(f'Opening {len(matching_row)} file(s) for baseline around day {day.left}')
-
-            # Open the matching files
-            data_list = []
-            for i in range(0, len(matching_row)):
-                print(f'Opening file(s): {matching_row["File"].iloc[i]}.')
-                file = open_data(matching_row['File'].iloc[i])
-                data_list.append(file)
-            df = pd.concat(data_list)
-
-            # Subset the daily and the baseline VOD file to the date (if the day has measurements)
-            date_string = day.left.strftime('%Y-%m-%d')
-
-            # Access data for existing days and skip the ones that are not present
+        if len(matching_row) == 1:
+            # print(f'Opening {len(matching_row)} file(s) for baseline around day {day.left}')
+            # Open the vod-raw monthly file if not open yet
+            if matching_row["File"].iloc[0] != open_vod_raw_file:
+                open_vod_raw_file = matching_row['File'].iloc[0]
+                print(f'Opening vod-raw file: {open_vod_raw_file}.')
+                vod_raw_month = open_data(open_vod_raw_file)
+                vod_raw_month = vod_raw_month.rename(columns={"VOD": "VOD_raw"})
             try:
-                vod_day = df.xs(date_string, level='Epoch')
-                vod_bl = bl_data.xs(day.left, level='Date')
+                # Subset the daily and the baseline VOD file to the date (if the day has measurements)
+                date_string = day.left.strftime('%Y-%m-%d')
+                vod_day = vod_raw_month.xs(date_string, level='Epoch')
+                vod_bl = bl_data.xs(date_string, level='Date')
 
                 # Initialize hemispheric grid
                 hemi = hemistats.hemibuild(2)
-
                 # Classify vod data into grid cells and drop the azm und ele columns after
                 vod = hemi.add_CellID(vod_day, aziname='Azimuth', elename='Elevation').drop(
                     columns=['Azimuth', 'Elevation'])
-
                 # Merge statistics with the original VOD measurements
                 vod_anom_day = vod.join(vod_bl, on='CellID')
-
                 # Add to the daily file to the list
                 daily_vod_anom.append(vod_anom_day)
-
             except KeyError:
                 print(f'No data found for {date_string}. Skipping...')
                 skipped_days += 1
-
+        else:
+            print(f"ERROR: More than one daily file found for {day}: {matching_row}")
     print(f'\nTotal skipped days: {skipped_days}')
 
     # Combine the daily vod_anom fields
     VOD_anom = pd.concat(daily_vod_anom, axis=0)
 
     # Calculate the anomaly
-    VOD_anom['VOD_anom'] = VOD_anom['VOD'] - VOD_anom['VOD_mean']
+    VOD_anom['VOD_anom'] = VOD_anom['VOD_raw'] - VOD_anom['bl_VOD_mean']
+    VOD_anom['VOD'] = VOD_anom['VOD_anom'] + VOD_anom['bl_VOD_all_mean']
 
     if save_ts:
-        # Store the VOD_baseline file as a .nc
-        ds = xr.Dataset.from_dataframe(VOD_anom) # change to xarray
+        # Store the timeseries VOD file as a .nc
+        ds = xr.Dataset.from_dataframe(VOD_anom)
         comp = dict(zlib=True, complevel=5)
         encoding = {var: comp for var in ds.data_vars}
-
-        # Save as NetCDF file
         filepath = os.path.join(out_path, ts_name + '.nc')
         print(f'Writing the VOD timeseries file to {filepath}')
         ds.to_netcdf(filepath, format="NETCDF4", engine="netcdf4", encoding=encoding)
-
-    return VOD_anom
-
 
 
 

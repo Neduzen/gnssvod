@@ -1,3 +1,4 @@
+import datetime
 import os.path
 import sys
 from gnssvod.Gnss_site import Gnss_site
@@ -150,6 +151,7 @@ if __name__ == '__main__':
     site = None
     start_date = None
     is_autotime = False
+    is_lastweek = False
     year = None
 
     # Load console
@@ -172,6 +174,11 @@ if __name__ == '__main__':
         if arg == '-dates':
             if args[i+1] == "auto":
                 is_autotime = True
+            elif args[i+1] == "recent":
+                dt = datetime.datetime.now() - datetime.timedelta(days=7)
+                start_date = pd.Timestamp(f'{dt} 00:00:00')
+                if year is None:
+                    year = dt.year
             else:
                 start_date = pd.Timestamp(f'{args[i + 1]} 00:00:00')
         if arg == '-year':
@@ -184,12 +191,11 @@ if __name__ == '__main__':
 
     if gnss_site is None:
         print("No site selected")
-    if start_date is None:
-        start_date = pd.Timestamp("2022-01-01")
 
     # Create netcdf from raw data
     if is_preprocessing:
-        # now = pd.Timestamp(datetime.datetime.now().strftime("%Y-%m-%d 00:00:00"))-datetime.timedelta(7)
+        if start_date is None:
+            start_date = pd.Timestamp("2022-01-01")
         gnss_site.preprocess(is_tower, start_date, is_autotime)
     elif is_pairing:
         # start = pd.Timestamp("2022-01-01")

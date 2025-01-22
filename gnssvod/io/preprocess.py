@@ -184,7 +184,7 @@ def preprocess(filepattern,
                     else:
                         ds.to_netcdf(out_path)
                     print(f"Saved {len(x.observation):n} individual observations in {out_name}")
-            except FileError as ex:
+            except (FileError, Warning) as ex:
                 logging.error(f"File error for {out_name} while execution and not successfully processed: {ex}")
                 print(f"Warning for file {out_name} while execution and not successfully processed: {ex}")
         # store station in memory if required
@@ -302,7 +302,7 @@ def filter_filelist(files, time_period, splitter=["raw_"]):
 #-------------------------------------------------------------------------- 
 
 
-def gather_stations(filepattern,pairings,timeintervals,keepvars=None,outputdir=None,compress=True):
+def gather_stations(filepattern, pairings, timeintervals, keepvars=None, outputdir=None, compress=True, splitter=[]):
     """
     Merges observations from different sites according to specified pairing rules over the desired time intervals.
     The new dataframe will contain a new index level corresponding to each site, with keys corresponding to station names.
@@ -358,7 +358,7 @@ def gather_stations(filepattern,pairings,timeintervals,keepvars=None,outputdir=N
         iout = []
         for station_name in station_names:
             # Filter filename to only include those within the date range
-            filtered_filenames = filter_filelist(filenames[station_name], timeintervals, splitter=['raw_'])
+            filtered_filenames = filter_filelist(filenames[station_name], timeintervals, splitter=splitter)
             # get Epochs from all files
             # epochs = [xr.open_mfdataset(x).Epoch for x in filtered_filenames]
             # # # check which files have data that overlaps with the desired time intervals

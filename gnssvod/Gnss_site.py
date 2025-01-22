@@ -93,8 +93,7 @@ class Gnss_site:
         logging.info(f"Pairing of site {self.name} - {pairings} between {time_period[0].left} and {time_period[-1].right}")
         print(f"Pairing of site {self.name}")
         print(f"{pairings} between {time_period[0].left} and {time_period[-1].right}")
-        gather_stations(filepattern, pairings, time_period, outputdir=outputdir) #, time_period=time_period)
-        #def gather_stations(filepattern, pairings, timeintervals, keepvars=None, outputdir=None, compress=True):
+        gather_stations(filepattern, pairings, time_period, outputdir=outputdir, splitter=self.splitter_raw) #, time_period=time_period)
 
 
     def calculate_vod(self, time_periode=None):
@@ -175,8 +174,9 @@ class Gnss_site:
         print(f"Plot VOD times series")
         timeseries_path = {self.short_name: self.vod_timeseries_path}
         product_path = {self.short_name: self.vod_product_path}
+        baseline_path = {self.short_name: self.vod_baseline_path}
 
         out_path = {self.short_name: self.plot_path}
         #t_path = r'X:\rsws_gnss\VOD_timeseries_live/Lae_VOD_timeseries_bl15days_2023.nc'
-        result = vod_plots.do_plot(timeseries_path, product_path, year, out_path)
+        result = vod_plots.do_plot(timeseries_path, product_path, baseline_path, year, self.baseline_days, out_path)
 

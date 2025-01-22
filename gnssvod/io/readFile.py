@@ -203,6 +203,8 @@ def read_obsFile(observationFile, header=False, unzip_path=None):
             raise FileError(f'The file in zip archive containing the raw data observation file was empty: {observationFile}')
         elif str(e) == "Zip archive has no .O-file":
             raise FileError(f'There was no .O - file in the zip archive: {observationFile}')
+        elif str(e) == "file is too short to be a valid RINEX file":
+            raise FileError(f'File is too short to be a valid RINEX file')
         else:
             raise
     # open file

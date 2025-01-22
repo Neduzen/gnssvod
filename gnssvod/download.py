@@ -305,6 +305,7 @@ def get_sp3(sp3file, directory=os.getcwd()):
         Archive(fileName).extractall(os.getcwd())
     except:
         print(" | Requested file", fileName, "cannot be not found!")
+        raise Warning("Requested sp3 file", fileName, "cannot be not found in FTP server | Exiting")
 
     return fileName
     
