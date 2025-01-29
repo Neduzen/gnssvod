@@ -9,6 +9,7 @@ import gnssvod.plot
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
+from datetime import date
 
 
 CONFIG_FILENAME = "config.ini"
@@ -194,11 +195,12 @@ if __name__ == '__main__':
 
     # Create netcdf from raw data
     if is_preprocessing:
+        # Preprocess one instrument of the station data from the raw files and stores it as netcdf files for weekly data.
         if start_date is None:
             start_date = pd.Timestamp("2022-01-01")
         gnss_site.preprocess(is_tower, start_date, is_autotime)
     elif is_pairing:
-        # start = pd.Timestamp("2022-01-01")
+        # Pairs the station data (Tower and Ground) for the given month from date
         end_date = pd.to_datetime(start_date) + pd.offsets.MonthBegin(1)
         timeperiod = pd.interval_range(start=start_date, end=end_date, freq='D')
         gnss_site.pairing(timeperiod)
@@ -207,8 +209,8 @@ if __name__ == '__main__':
             print("No year defined. Cancel process.")
             print("Define with: '-year 2021'")
         else:
+            # Calculates the VOD from the paired station data (tower and ground) and stores it for the given year
             year_plus = str(int(year)+1)
-            # timeperiod = pd.interval_range(start=pd.Timestamp(f"{year_minus}-12-31 23:59:59"), end=pd.Timestamp(f"{year}-12-31 23:59:59"), freq='ME')
             timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
                                            end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
             gnss_site.calculate_vod(timeperiod)
@@ -217,29 +219,25 @@ if __name__ == '__main__':
             print("No year defined. Cancel process.")
             print("Define with: '-year 2021'")
         else:
+            # Creates the vod times and baselines and saves them
             gnss_site.create_timeseries(year)
     elif is_product:
+        # Creates the vod products and saves them
         gnss_site.create_product()
     elif is_plot:
-        # filename = "vod_Dav_20220101_20220201.nc"
-        # vod_dav = xr.open_dataset(fr'Z:\group\rsws_gnss\VOD\Dav\{filename}')
-        # # vod_lae = xr.open_dataset('gnss/Lae_20240129000000_20240130000000.nc')
-        # station = {"Dav": {"filename": filename, "observation": vod_dav, "version": "3"}}
-        # orbit = {"Azimuth": vod_dav.Azimuth_ref, "Elevation": vod_dav.Elevation_ref}
-        # sv_list = vod_dav.SV
-        # gnssvod.plot.azelplot(station, orbit, SVlist=sv_list)
-        # plot_it()
-        # timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
-        #                                end=pd.Timestamp(f"{year}-12-31 00:00:00"), freq='MS')
-        year_plus = str(int(year) + 1)
-        # timeperiod = pd.interval_range(start=pd.Timestamp(f"{year_minus}-12-31 23:59:59"), end=pd.Timestamp(f"{year}-12-31 23:59:59"), freq='ME')
-        timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
-                                       end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
+        # If year is None, do whole time series plot, else specific year jan to dec.
         if year is None:
-            print("No year defined. Cancel process.")
-            print("Define with: '-year 2021'")
+            print("No year defined. Do whole timeseries")
+            # TODO: Do site specific startyear
+            year = 2021
+            enddate = pd.Timestamp(f"{date.today().strftime('%Y-%m-%d')} 00:00:00")
         else:
-            gnss_site.plot_timeseries(year)
+            year_plus = str(int(year) + 1)
+            enddate = pd.Timestamp(f"{year_plus}-01-01 00:00:00")
+        timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
+                                       end=enddate, freq='MS')
+        # Plot time series
+        gnss_site.plot_timeseries(year)
 
     else:
         print("No mode")

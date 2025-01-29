@@ -10,11 +10,12 @@ import os.path
 import gnssvod.hemistats.hemistats as hemistats
 import glob
 import re
-
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 import xarray as xr
+import logging
+
 
 # --------------------
 # Index available data
@@ -34,8 +35,8 @@ def index_data_files(in_path, station_name, mode="date"):
 
     """
     # List the file names of all VOD files in the folder path
-    files = glob.glob(in_path + r'\*.nc')
-
+    files = glob.glob(os.path.join(in_path, "*.nc"))
+    print(f"File read: {len(files)}")
     # Get all files
     if mode == "all":
         file_dates = pd.DataFrame({'File': files, 'Year': "All"})
@@ -217,12 +218,13 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
                 df = pd.concat(data_list)
 
             # Select a subset of df based on the baseline
-            subset_df = df.loc[(slice(baseline_starday, baseline_endday),), :]
+            subset_df = df.loc[((df.index.get_level_values('Epoch') >= baseline_starday) &
+                                (df.index.get_level_values('Epoch') <= baseline_endday),), :]
 
             # Check if the subset has values (here one could also set another threshold for min. days in baseline)
             if not subset_df.empty:
                 # Calculate the VOD average per cell in hemisphere based on the baseline interval
-                print('Calculating the baseline VOD.')
+                # print('Calculating the baseline VOD.')
                 # Initialize hemispheric grid
                 hemi = hemistats.hemibuild(2)
                 mean = np.nanmean(subset_df["VOD"])
@@ -352,8 +354,12 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
             except KeyError:
                 print(f'No data found for {date_string}. Skipping...')
                 skipped_days += 1
-        else:
+        elif len(matching_row) > 1:
             print(f"ERROR: More than one daily file found for {day}: {matching_row}")
+            logging.error(f"Timeseries,  more than one daily file found for {day}: {matching_row}")
+        else:
+            print(f"ERROR: No daily file found for {day}")
+            logging.error(f"Timeseries, noe daily file found for {day}")
     print(f'\nTotal skipped days: {skipped_days}')
 
     # Combine the daily vod_anom fields

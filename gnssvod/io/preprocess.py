@@ -110,6 +110,7 @@ def preprocess(filepattern,
             files_to_skip = []
         
         # for each file
+        count_failed = 0
         result = []
         for i, filename in tqdm(enumerate(filelist), desc="Preprocessing"):#, file=sys.stdout, colour='GREEN'):#, unit="iteration", position=0, leave=True):
             try:
@@ -185,12 +186,14 @@ def preprocess(filepattern,
                         ds.to_netcdf(out_path)
                     print(f"Saved {len(x.observation):n} individual observations in {out_name}")
             except (FileError, Warning) as ex:
-                logging.error(f"File error for {out_name} while execution and not successfully processed: {ex}")
-                print(f"Warning for file {out_name} while execution and not successfully processed: {ex}")
+                count_failed+=1
+                logging.error(f"File error for {out_name} while processing: {ex}")
+                print(f"Error for file {out_name} while processing: {ex}")
         # store station in memory if required
         if outputresult:
             out[station_name]=result
         logging.info(f"From {len(item[1])} filtered to {len(filelist)} saved into .nc files")
+        print(f"From {len(item[1])} filtered to {len(filelist)} saved into .nc files. Failed to process: {count_failed} ")
 
     if outputresult:
         return out

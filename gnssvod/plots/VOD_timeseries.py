@@ -22,6 +22,9 @@ def calc_timeseries(vod_path, year, baseline_days, out_path_baseline, out_path_t
     endDate = f'{year}-12-31'
     timeperiod = timePeriod(startDate, endDate)
 
+    print(f"Time series for {station_name} from {startDate} to {endDate}")
+    print(f"Read files at {vod_path}, length: {len(file_dates)}")
+
     # Generate a baseline file and save it
     bl_name = f'{station_name}_{year}_vod_baseline_{str(baseline_days)}days'
     baseline_param = (baseline_days - 1) / 2

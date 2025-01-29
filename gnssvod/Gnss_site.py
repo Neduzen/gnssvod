@@ -68,7 +68,8 @@ class Gnss_site:
 
         extension = '.rnx'
         self.delete_files(temppath, extension)
-        self.adjust_autodate(time_period[-1].right)
+        if is_autotime:
+            self.adjust_autodate(time_period[-1].right)
 
         end_time = datetime.datetime.now()
         elapsed_time = end_time - start_time

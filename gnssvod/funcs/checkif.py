@@ -120,12 +120,15 @@ def isexist(fileName, delete=True, unzip_path=None):
  # --------- case where the required file exists and is a zip file ---------------------
     elif iszip(fileName):
         import pdb
-        print(fileName + " exists | Unzipping...")
-        unzipped = decompress_on_disk(fileName, delete=delete, unzip_path=unzip_path)
-        fileName = unzipped.absolute().as_posix()
-        print(fileName + " unzipped | Reading...")
-        
- # --------- case where the required file exists and is not a zip file -----------------
+        if os.path.getsize(fileName) < os.path.getsize(fileName) < 20000:
+            print(fileName + " exists | Unzipping...")
+            unzipped = decompress_on_disk(fileName, delete=delete, unzip_path=unzip_path)
+            fileName = unzipped.absolute().as_posix()
+            print(fileName + " unzipped | Reading...")
+        else:
+            raise Warning("Zip file to small to contain observation data:", fileName)
+
+    # --------- case where the required file exists and is not a zip file -----------------
     else:
         print(fileName + " exists | Reading...")
 

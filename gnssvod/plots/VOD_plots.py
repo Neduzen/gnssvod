@@ -131,6 +131,8 @@ def do_plot(timeseries_path, product_path, baseline_path, year, baseline, out_pa
     product_path = product_path[station_name]
     baseline_path = baseline_path[station_name]
     out_path = out_path[station_name]
+
+    print(f"Plot gnss site {station_name} at {out_path}")
     
     # Load and filter input files
     files_product = index_data_files(product_path, station_name, "all")
@@ -155,8 +157,9 @@ def do_plot(timeseries_path, product_path, baseline_path, year, baseline, out_pa
     # Sorted by Epoch and satellite (Coordinates of ds). All Data variables of
     df = ds.to_dataframe().dropna(how='all')
 
+    out_path_hem = fr'{out_path}\hemplot'
     # Run for each month of the year the hemispherical plot
     for month in range(1, 13):
-        monthly_hemi_plot(df, station_name, year, month, out_path, is_baseline=True)
+        monthly_hemi_plot(df, station_name, year, month, out_path_hem, is_baseline=True)
 
     print("Plots finished")
