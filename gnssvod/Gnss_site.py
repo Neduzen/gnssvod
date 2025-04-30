@@ -6,9 +6,10 @@ import sys
 import datetime as datetime
 from gnssvod.io.preprocess import (preprocess, get_filelist, gather_stations)
 import pandas as pd
-from gnssvod.analysis.vod_calc import calc_vod
-import gnssvod.plots.VOD_timeseries as vod_timeseries
-import gnssvod.plots.VOD_plots as vod_plots
+from gnssvod.analysis.vod_calc import process_vod
+import gnssvod.analysis.vod_timeseries as vod_timeseries
+import gnssvod.analysis.vod_plots as vod_plots
+
 
 class Gnss_site:
     def __init__(self, site):
@@ -106,8 +107,8 @@ class Gnss_site:
 
         logging.info(f"Calculate VOD of site {self.name} between {time_periode[0].left} and {time_periode[-1].right}")
         print(f"Calculate VOD: {filepattern}")
-        result = calc_vod(filepattern, pairing, bands, time_periode, outputdir)
-    
+        process_vod(filepattern, pairing, bands, time_periode, outputdir)
+
     def get_extension(self, ext):
         extension = f"/*.{ext}" # Linux extension
         if os.name == 'nt':  # 'nt' represents Windows
@@ -161,11 +162,24 @@ class Gnss_site:
         result = vod_timeseries.calc_timeseries(in_path, year, int(self.baseline_days), out_baseline_path, out_timeseries_path)
 
 
-    def create_product(self):
+    def create_product(self, hour_frequency=1):
         print(f"Create VOD product")
         in_path = {self.short_name: self.vod_timeseries_path}
         out_path = {self.short_name: self.vod_product_path}
-        hour_frequency = 1
+
+        do_rain = True
+        if do_rain:
+            t=1
+            # prc = pd.read_csv(
+            #     r"S:\group\rsws\Data\Sites\CH-LAE_Laegeren\ETH_tower_measurements\NewPlatform_2021-2024\precip_cummulative_mm.csv")
+            # prc["Epoch"] = pd.to_datetime(prc["Time"], format='%Y-%m-%d %H:%M:%S')
+            # prc = prc[["Epoch", "CH-LAE"]]
+            # prc = prc[prc["CH-LAE"] > 0]
+            # prc['prec'] = prc['CH-LAE'].fillna(method='ffill').diff()
+            # prc.loc[prc['prec'].isnull(), 'prec'] = prc['CH-LAE']
+            # prc = prc[["Epoch", "prec"]]
+            # prc_hourly = prc.groupby(pd.Grouper(freq='1h', key='Epoch')).sum()
+            # prc_hourly.to_csv(r'S:\group\rsws_gnss\Meteo_data\Laeg\Laeg_precip.csv', index=True)
 
         result = vod_timeseries.calc_product(in_path, self.baseline_days, hour_frequency, out_path)
 
@@ -181,3 +195,12 @@ class Gnss_site:
         #t_path = r'X:\rsws_gnss\VOD_timeseries_live/Lae_VOD_timeseries_bl15days_2023.nc'
         result = vod_plots.do_plot(timeseries_path, product_path, baseline_path, year, self.baseline_days, out_path)
 
+
+    def plot_analysis(self):
+        print(f"Plot VOD times series")
+        timeseries_path = {self.short_name: self.vod_timeseries_path}
+        product_path = {self.short_name: self.vod_product_path}
+        baseline_path = {self.short_name: self.vod_baseline_path}
+
+        out_path = {self.short_name: self.plot_path}
+        result = vod_plots.analysis_plot(product_path, self.baseline_days, out_path)

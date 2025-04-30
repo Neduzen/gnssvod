@@ -303,9 +303,10 @@ def get_sp3(sp3file, directory=os.getcwd()):
             url.urlretrieve(ftp, file_topath, reporthook=t.update_to)
         print(' | Download completed for', fileName)
         Archive(fileName).extractall(os.getcwd())
-    except:
-        print(" | Requested file", fileName, "cannot be not found!")
-        raise Warning("Requested sp3 file", fileName, "cannot be not found in FTP server | Exiting")
+    except Exception as e:
+        print(" | Requested file", fileName, "cannot be found!")
+        print(f"Exception: {e}")
+        raise Warning("Requested sp3 file", fileName, "cannot be found in FTP server | Exiting")
 
     return fileName
     

@@ -356,10 +356,10 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
                 skipped_days += 1
         elif len(matching_row) > 1:
             print(f"ERROR: More than one daily file found for {day}: {matching_row}")
-            logging.error(f"Timeseries,  more than one daily file found for {day}: {matching_row}")
+            logging.error(f"Timeseries, more than one daily file found for {day}: {matching_row}")
         else:
             print(f"ERROR: No daily file found for {day}")
-            logging.error(f"Timeseries, noe daily file found for {day}")
+            logging.error(f"Timeseries, no daily file found for {day}")
     print(f'\nTotal skipped days: {skipped_days}')
 
     # Combine the daily vod_anom fields
@@ -377,6 +377,25 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
         filepath = os.path.join(out_path, ts_name + '.nc')
         print(f'Writing the VOD timeseries file to {filepath}')
         ds.to_netcdf(filepath, format="NETCDF4", engine="netcdf4", encoding=encoding)
+
+        # Store the timeseries VOD as 30min avg.
+        ds_avg = VOD_anom.groupby([pd.Grouper(freq=f'0.5h', level='Epoch'), "CellID"]).mean()
+        # ds_avg = ds.groupby(["Epoch", "CellID"]).mean()
+        ds_avg["CountVals"] = VOD_anom.groupby([pd.Grouper(freq=f'0.5h', level='Epoch'), "CellID"])["VOD"].count()
+        ds_avg["VOD_anom_corr"] = ds_avg["VOD_anom"]+ds_avg["VOD_raw"].mean()
+        ds_avg["VOD_anom_corr2"] = ds_avg["VOD_anom"]+ds_avg['bl_VOD_mean']
+        ds_avg["VOD_anom_corr3"] = ds_avg["VOD_anom"]+ds_avg['bl_VOD_all_mean']
+        # ds_avg.Epoch[:] = ds_avg.Epoch + pd.Timedelta(minutes=15)
+        ds_avg = xr.Dataset.from_dataframe(ds_avg)
+        ds_avg.Epoch.data[:] = ds_avg.Epoch.data + pd.Timedelta(minutes=15)
+
+        out_path_hemisphere = out_path.replace("timeseries", "hemisphere")
+        ts_name_hemisphere = ts_name.replace("timeseries", "hemisphere")
+        comp = dict(zlib=True, complevel=5)
+        encoding = {var: comp for var in ds_avg.data_vars}
+        filepath = os.path.join(out_path_hemisphere, ts_name_hemisphere + '_30min.nc')
+        print(f'Writing the VOD timeseries file to {filepath}')
+        ds_avg.to_netcdf(filepath, format="NETCDF4", engine="netcdf4", encoding=encoding)
 
 
 

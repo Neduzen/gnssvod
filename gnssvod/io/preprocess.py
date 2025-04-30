@@ -111,6 +111,8 @@ def preprocess(filepattern,
         
         # for each file
         count_failed = 0
+        count_skipped = 0
+        count_saved = 0
         result = []
         for i, filename in tqdm(enumerate(filelist), desc="Preprocessing"):#, file=sys.stdout, colour='GREEN'):#, unit="iteration", position=0, leave=True):
             try:
@@ -118,6 +120,7 @@ def preprocess(filepattern,
                 out_name = os.path.splitext(os.path.basename(filename))[0]+'.nc'
                 # if the name of the saved output file is in the files to skip, skip processing
                 if out_name in files_to_skip:
+                    count_skipped += 1
                     print(f"{out_name} already exists, skipping.. (pass overwrite=True to overwrite)")
                     continue # skip remainder of loop and go directly to next filename
 
@@ -185,6 +188,7 @@ def preprocess(filepattern,
                     else:
                         ds.to_netcdf(out_path)
                     print(f"Saved {len(x.observation):n} individual observations in {out_name}")
+                    count_saved += 1
             except (FileError, Warning) as ex:
                 count_failed+=1
                 logging.error(f"File error for {out_name} while processing: {ex}")
@@ -193,7 +197,8 @@ def preprocess(filepattern,
         if outputresult:
             out[station_name]=result
         logging.info(f"From {len(item[1])} filtered to {len(filelist)} saved into .nc files")
-        print(f"From {len(item[1])} filtered to {len(filelist)} saved into .nc files. Failed to process: {count_failed} ")
+        print(f"From {len(item[1])} filtered to {len(filelist)} saved into .nc files.")
+        print(f"Saved: {count_saved}, Skipped: {count_skipped}, Failed: {count_failed} ")
 
     if outputresult:
         return out

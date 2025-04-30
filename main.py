@@ -146,6 +146,7 @@ if __name__ == '__main__':
     is_timeseries = False
     is_product = False
     is_plot = False
+    is_analysis = False
     # Program parameters
     is_tower = False
     is_ground = False
@@ -154,6 +155,7 @@ if __name__ == '__main__':
     is_autotime = False
     is_lastweek = False
     year = None
+    sampling_frequency = 1
 
     # Load console
     for i, arg in enumerate(args):
@@ -166,6 +168,8 @@ if __name__ == '__main__':
             is_vod = True
         if arg == '-s' or arg == '-site':
             site = args[i + 1]
+        if arg == '-analysis':
+            is_analysis = True
         if arg == '-plot':
             is_plot = True
         if arg == '-product':
@@ -184,6 +188,8 @@ if __name__ == '__main__':
                 start_date = pd.Timestamp(f'{args[i + 1]} 00:00:00')
         if arg == '-year':
             year = args[i + 1]
+        if arg == '-h':
+            sampling_frequency = int(args[i+1])
 
     gnss_site = None
     for s in sites:
@@ -205,15 +211,22 @@ if __name__ == '__main__':
         timeperiod = pd.interval_range(start=start_date, end=end_date, freq='D')
         gnss_site.pairing(timeperiod)
     elif is_vod:
-        if year is None:
+        if year is None and start_date is None:
             print("No year defined. Cancel process.")
             print("Define with: '-year 2021'")
         else:
+            timeperiod = None
+            if year is not None:
+                year_plus = str(int(year)+1)
+                timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
+                                               end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
+            elif start_date is not None:
+                end_date = pd.to_datetime(start_date) + pd.offsets.MonthBegin(1)
+                timeperiod = pd.interval_range(start=start_date, end=end_date, freq='MS')
+
             # Calculates the VOD from the paired station data (tower and ground) and stores it for the given year
-            year_plus = str(int(year)+1)
-            timeperiod = pd.interval_range(start=pd.Timestamp(f"{year}-01-01 00:00:00"),
-                                           end=pd.Timestamp(f"{year_plus}-01-01 00:00:00"), freq='MS')
             gnss_site.calculate_vod(timeperiod)
+
     elif is_timeseries:
         if year is None:
             print("No year defined. Cancel process.")
@@ -223,7 +236,9 @@ if __name__ == '__main__':
             gnss_site.create_timeseries(year)
     elif is_product:
         # Creates the vod products and saves them
-        gnss_site.create_product()
+        gnss_site.create_product(sampling_frequency)
+    elif is_analysis:
+        gnss_site.plot_analysis()
     elif is_plot:
         # If year is None, do whole time series plot, else specific year jan to dec.
         if year is None:
