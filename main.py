@@ -5,7 +5,6 @@ from gnssvod.Gnss_site import Gnss_site
 import pandas as pd
 import configparser
 import xarray as xr
-import gnssvod.plot
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
