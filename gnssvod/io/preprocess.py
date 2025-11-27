@@ -14,14 +14,14 @@ import datetime
 import numpy as np
 import pandas as pd
 import xarray as xr
-from gnssvod.io.readFile import read_obsFile, FileError
-import warnings
+import tempfile
 import fnmatch
 from pathlib import Path
 from typing import Union, Literal, Any
 from gnssvod.io.io import Observation
-from gnssvod.io.readFile import read_obsFile
+from gnssvod.io.readFile import read_obsFile, FileError
 from gnssvod.io.exporters import export_as_nc
+from gnssvod.funcs.date import doy2date
 from gnssvod.position.interpolation import sp3_interp_fast
 from gnssvod.position.position import gnssDataframe
 from gnssvod.funcs.constants import _system_name
@@ -41,7 +41,9 @@ def preprocess(filepattern: dict,
                encoding: Union[None, Literal['default'], dict] = 'default',
                outputresult: bool = False,
                aux_path: Union[str, None] = None,
-               approx_position: list[float] = None) -> dict[Any,list[Observation]]:
+               approx_position: list[float] = None,
+               splitter=["_raw"],
+               time_period=None,) -> dict[Any,list[Observation]]:
     """
     Reads and processes structured lists of RINEX observation files.
     
@@ -173,8 +175,9 @@ def preprocess(filepattern: dict,
                     if approx_position is not None:
                         x.approx_position = approx_position
                     # check that an approximate position exists before proceeding
-                    if (x.approx_position == [0,0,0]) or (x.approx_position is None):
-                        raise ValueError("Missing an approximate antenna position. Provide the argument 'approx_position' to preprocess()")
+                    if (x.approx_position == [0, 0, 0]) or (x.approx_position is None):
+                        raise ValueError(
+                            "Missing an approximate antenna position. Provide the argument 'approx_position' to preprocess()")
                     print(f"Calculating Azimuth and Elevation")
                     # note: orbit cannot be parallelized easily because it
                     # downloads and unzips third-party files in the current directory
@@ -194,12 +197,12 @@ def preprocess(filepattern: dict,
 
                 # write to file if required
                 if outputdir is not None:
-                    outpath = str(Path(outputdir[station_name],out_name))
+                    outpath = str(Path(outputdir[station_name], out_name))
                     # check that the output directory exists
                     if not os.path.exists(outpath):
                         os.makedirs(outpath)
                     # delete file if it exists
-                    out_path = os.path.join(ioutputdir,out_name)
+                    out_path = os.path.join(ioutputdir, out_name)
                     if os.path.exists(out_path):
                         os.remove(out_path)
                     export_as_nc(ds = x.to_xarray(),
