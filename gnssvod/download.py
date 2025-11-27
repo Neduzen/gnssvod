@@ -286,9 +286,9 @@ def get_sp3(sp3file, directory=os.getcwd()):
         raise Warning('No internet connection! | Cannot download orbit file')
     
     sp3FileDir = 'products'
-    if int(gpsWeek) < 2038:
+    if int(gpsWeek)<2038:
         intermediateDir = ''
-    elif int(gpsWeek) < 2247:
+    elif int(gpsWeek)<2247: 
         intermediateDir = 'mgex'
     else:
         intermediateDir = ''
@@ -298,15 +298,13 @@ def get_sp3(sp3file, directory=os.getcwd()):
     ftp = '/'.join(fileDir) # FTP link of file
     
     try:
-        print('Downloading:', fileName, end='')
+        print('Downloading:', fileName, end = '')
         with TqdmUpTo(unit='B', unit_scale=True, unit_divisor=1024, miniters=1, desc=fileName) as t:
             url.urlretrieve(ftp, file_topath, reporthook=t.update_to)
         print(' | Download completed for', fileName)
         Archive(fileName).extractall(os.getcwd())
-    except Exception as e:
-        print(" | Requested file", fileName, "cannot be found!")
-        print(f"Exception: {e}")
-        raise Warning("Requested sp3 file", ftp, "cannot be found in FTP server | Exiting")
+    except:
+        print(" | Requested file", fileName, "cannot be not found!")
 
     return fileName
     
@@ -343,9 +341,9 @@ def get_clock(clockFile, directory=os.getcwd()):
         raise Warning('No internet connection! | Cannot download clock file')
     
     clockFileDir = 'products'
-    if int(gpsWeek) < 2038:
+    if int(gpsWeek)<2038:
         intermediateDir = ''
-    elif int(gpsWeek) < 2247:
+    elif int(gpsWeek)<2247:
         intermediateDir = 'mgex'
     else:
         intermediateDir = ''

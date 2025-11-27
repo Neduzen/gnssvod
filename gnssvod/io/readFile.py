@@ -12,12 +12,9 @@ import time
 import datetime
 import numpy as np
 import pandas as pd
-import pdb
-from gnssvod.download import get_rinex, get_ionosphere
 from gnssvod.funcs.checkif import (isfloat, isint, isexist)
-from gnssvod.funcs.date import doy2date
 from gnssvod.funcs.constants import _system_name
-from gnssvod.io.io import Observation, Header, Navigation, PEphemeris, _ObservationTypes
+from gnssvod.io.io import Observation, Header, Navigation, _ObservationTypes
 # ===========================================================
 
 
@@ -215,6 +212,8 @@ def read_obsFile(observationFile, header=False, unzip_path=None):
         if 'RINEX VERSION / TYPE' in obsLines[line]:
             version = obsLines[line][0:-20].split()[0]
             break
+        else:
+            line += 1
     f.close()
     if version is None:
         raise FileError(f'Observation file contained no versioning or was invalid {observationFile}')
@@ -380,8 +379,8 @@ def read_obsFile_v2(observationFile,header=False):
             obsEpoch.append(obsLines[i])
         obsList.extend(obsEpoch)
         del obsLines[0:rowNumber*NoSV]
-        # if len(obsLines) == 0:
-        #     break
+        if len(obsLines) == 0:
+            break
     columnNames = ToB[1:]
     columnNames.append('Epoch')
     SVList = [x.replace(' ','0') if x[1]==' ' else x for x in SVList] # replace 'G 1' with 'G01' (etc)
@@ -415,19 +414,9 @@ def read_obsFile_v2(observationFile,header=False):
 def read_obsFile_v3(obsFileName,header):
     def get_old_band_names(sv, bands):
         nbands = ["C1", "L1", "D1", "S1", "C2", "L2", "D2", "S2"]
-        # if sv == "G":
-            # obands = ["C1C", "L1C", "D1C", "S1C", "C2X", "L2X", "D2X", "S2X"]
-        # elif sv == "R":
-            # obands = ["C1C", "L1C", "D1C", "S1C", "C2C", "L2C", "D2C", "S2C"]
-        # elif sv == "E":
-            # obands = ["C1X", "L1X", "D1X", "S1X", "C7X", "L7X", "D7X", "S7X"]
-        # elif sv == "J":
-            # obands = ["C1C", "L1C", "D1C", "S1C", "C2X", "L2X", "D2X", "S2X"]
         if sv == "S":
         #     obands = ["C1C", "L1C", "D1C", "S1C"]
             nbands = ["C1", "L1", "D1", "S1"]
-        # elif sv == "C":
-        #     obands = ["C2I", "L2I", "D2I", "S2I", "C7I", "L7I", "D7I", "S7I"]
         if len(bands) == len(nbands):
             return nbands
         else:
@@ -635,23 +624,23 @@ def read_obsFile_v3(obsFileName,header):
             # =============================================================================
             epoch_SVNumber = int(epoch_SVNumber)
             for svLine in range(currentline,currentline+epoch_SVNumber):
-                obsEpoch = np.full((1,len(ToB)), None)
+                obsEpoch = np.full((1,len(ToB)), np.nan)
                 svList.append(obsLines[svLine][:3])
                 if obsLines[svLine].startswith("G"):
-                    obsEpoch[0,index_GPS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_GPS)*16,16)]])
+                    obsEpoch[0,index_GPS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_GPS)*16,16)]])
                 elif obsLines[svLine].startswith("R"):
-                    obsEpoch[0,index_GLONASS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_GLONASS)*16,16)]])
+                    obsEpoch[0,index_GLONASS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_GLONASS)*16,16)]])
                     #obsEpoch[svLine,index_GLONASS]
                 elif obsLines[svLine].startswith("E"):
-                    obsEpoch[0,index_GALILEO] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_GALILEO)*16,16)]])
+                    obsEpoch[0,index_GALILEO] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_GALILEO)*16,16)]])
                 elif obsLines[svLine].startswith("C"):
-                    obsEpoch[0,index_COMPASS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_COMPASS)*16,16)]])
+                    obsEpoch[0,index_COMPASS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_COMPASS)*16,16)]])
                 elif obsLines[svLine].startswith("J"):
-                    obsEpoch[0,index_QZSS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_QZSS)*16,16)]])
+                    obsEpoch[0,index_QZSS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_QZSS)*16,16)]])
                 elif obsLines[svLine].startswith("I"):
-                    obsEpoch[0,index_IRSS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_IRSS)*16,16)]])
+                    obsEpoch[0,index_IRSS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_IRSS)*16,16)]])
                 elif obsLines[svLine].startswith("S"):
-                    obsEpoch[0,index_SBAS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else None for i in range(0,len(ToB_SBAS)*16,16)]])
+                    obsEpoch[0,index_SBAS] = np.array([[float(obsLines[svLine][3:][i:i+14]) if isfloat(obsLines[svLine][3:][i:i+14])==True else np.nan for i in range(0,len(ToB_SBAS)*16,16)]])
                 obsEpoch = np.append(obsEpoch,epoch)
                 obsList.append(obsEpoch)
             # =============================================================================

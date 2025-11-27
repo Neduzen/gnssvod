@@ -32,11 +32,9 @@ from gnssvod.geodesy import (coordinate, projection)
 from gnssvod.hemistats.hemistats import (hemibuild)
 from gnssvod.funcs.funcs import (gpsweekday, gpswdtodate, jday, julianday2date,
                                 doy, doy2date, datetime2doy)
-from gnssvod.download import (get_rinex, get_rinex3, get_navigation,
+from gnssvod.download import (get_rinex, get_rinex3, get_navigation, 
                              get_sp3, get_clock, get_ionosphere)
-from gnssvod.analysis.vod_calc import (process_vod)
-from gnssvod.analysis.vod_timeseries import (calc_product, calc_timeseries)
-from gnssvod.analysis.vod_plots import (do_plot)
+from gnssvod.analysis.vod_calc import (calc_vod)
 from gnssvod import plot
 
 __version__ = '2024.03.10'
