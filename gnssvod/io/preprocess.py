@@ -310,7 +310,8 @@ def filter_filelist(files, time_period, splitter=["raw_"]):
 #-------------------------------------------------------------------------- 
 
 
-def gather_stations(filepattern, pairings, timeintervals, keepvars=None, outputdir=None, compress=True, splitter=[]):
+def gather_stations(filepattern, pairings, timeintervals, keepvars=None,
+                    outputdir=None, compress=True, splitter=[], out_station_names=None):
     """
     Merges observations from different sites according to specified pairing rules over the desired time intervals.
     The new dataframe will contain a new index level corresponding to each site, with keys corresponding to station names.
@@ -373,6 +374,11 @@ def gather_stations(filepattern, pairings, timeintervals, keepvars=None, outputd
             # isin = [overall_interval.overlaps(pd.Interval(left=pd.Timestamp(x.values.min()),
             #                                               right=pd.Timestamp(x.values.max()))) for x in epochs]
             # print(f'Found {sum(isin)} files for {station_name}')
+
+            if len(filtered_filenames)==0:
+                print("Problem: No filtered files available")
+                return None
+
             print(f'Reading')
             # open those files and convert them to pandas dataframes
             idata = [xr.open_mfdataset(x).to_dataframe().dropna(how='all') \
@@ -382,12 +388,15 @@ def gather_stations(filepattern, pairings, timeintervals, keepvars=None, outputd
             idata = idata[~idata.index.duplicated()].sort_index(level=['Epoch','SV'])
             # add the station data in the iout list
             iout.append(idata)
-        
+
+        if out_station_names is None:
+            out_station_names = station_names
         print(f'Concatenating')
-        iout = pd.concat(iout, keys=station_names, names=['Station'])
+        iout = pd.concat(iout, keys=out_station_names, names=['Station'])
         # only keep required vars and drop potential empty rows
         if keepvars is not None:
             iout = subset_vars(iout,keepvars,force_epoch_system=False)
+
         # split the dataframe into multiple dataframes according to timeintervals
         out[case_name] = [x for x in iout.groupby(pd.cut(iout.index.get_level_values('Epoch').tolist(), timeintervals))]
         

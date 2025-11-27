@@ -3,20 +3,19 @@ import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from gnssvod.analysis.vod_timeseries_helper_functions import index_data_files, timePeriod, VOD_base_calc, vod_timeseries_baseline_correction, filter_index_files
+from gnssvod.analysis.vod_timeseries_helper_functions import index_data_files, timePeriod, VOD_base_calc, vod_timeseries_baseline_correction, filter_index_files, get_angles_by_cellid
 import os.path
 
 
 # CREATE TIME SERIES FROM VOD DATA #
-# Use the code from the example scripts provided by Vincent and adjusted to our processing
-def calc_timeseries(vod_path, year, baseline_days, out_path_baseline, out_path_timeseries):
+def calc_timeseries(vod_path, year, baseline_days, out_path_baseline, out_path_timeseries, ignore_glosas=False):
     """
     Takes the vod files and creates baseline files as correction
     and construct a time series based on the vod data and baseline.
 
     Parameters
     ----------
-    vod_path: Path were the vod raw files are stored.
+    vod_path: Path where the vod raw files are stored.
 
     year: Year to be processed as timeseries.
 
@@ -42,42 +41,81 @@ def calc_timeseries(vod_path, year, baseline_days, out_path_baseline, out_path_t
     print(f"Time series for {station_name} from {startDate} to {endDate}")
     print(f"Read files at {vod_path}, length: {len(file_dates)}")
 
+    filename_ext = ""
+    if ignore_glosas:
+        filename_ext="_noR"
+
     # Generate a baseline file and save it
-    bl_name = f'{station_name}_{year}_vod_baseline_{str(baseline_days)}days'
+    bl_name = f'{station_name}_{year}_vod_baseline_{str(baseline_days)}days{filename_ext}'
     baseline_param = (baseline_days - 1) / 2
-    # VOD_base_calc(file_dates, timeperiod, baseline_param, out_path_baseline, bl_name, save_bs=True)
+    VOD_base_calc(file_dates, timeperiod, baseline_param, out_path_baseline, bl_name, save_bs=True, ignore_glosas=ignore_glosas)
 
     # Calculate time series from VOD raw and baseline correction
     baseline_filepath = os.path.join(out_path_baseline, bl_name+'.nc')
     ds_bl = xr.open_dataset(baseline_filepath)
     bl = ds_bl.to_dataframe().dropna(how='all').reorder_levels(['Date', 'CellID']).sort_index()
-    ts_name = f'{station_name}_{year}_VOD_timeseries_bl{str(baseline_days)}days'
-    vod_timeseries_baseline_correction(file_dates, timeperiod, bl, out_path_timeseries, ts_name, save_ts=True)
+    ts_name = f'{station_name}_{year}_VOD_timeseries_bl{str(baseline_days)}days{filename_ext}'
+    vod_timeseries_baseline_correction(file_dates, timeperiod, bl, out_path_timeseries, ts_name, save_ts=True, ignore_glosas=ignore_glosas)
     print("Finished VOD timeseries calculations")
 
 
-def calc_product(timeseries_path, baseline, hour_frequency, out_product, rain_file=None):
+def calc_product(timeseries_path, baseline, hour_frequency, out_product, rain_file=None, max_elevation=90, ignore_glosas=False, only_const=None):
     station_name = list(timeseries_path.keys())[0]
     timeseries_path = timeseries_path[station_name]
     out_product = out_product[station_name]
-    h_freq = str(hour_frequency)
+    if isinstance(hour_frequency, int):
+        freq = f'{hour_frequency}h'
+    else:
+        min_frequency = int(60 * hour_frequency)
+        freq = f'{min_frequency}min'
 
+    max_ele = ''
+
+    print(f"Max elevation: {max_elevation}")
     file_dates = index_data_files(timeseries_path, station_name, "annual")
-    file_dates = filter_index_files(file_dates, baseline=baseline, notincluded="old")
+
+    filename_ext = ""
+    exclude = "_noR"
+    if ignore_glosas:
+        filename_ext = "_noR"
+        exclude = ""
+    file_dates = filter_index_files(file_dates, baseline=baseline, text=filename_ext, notincluded=exclude)
+    file_dates = file_dates.sort_values("Year")
+    print(f"Limited files to {len(file_dates['File'])}: {file_dates['File']}")
 
     timeseries_df_years = []
     for f in file_dates["File"]:
+        print(f"Open: {f}")
         ts_vod = xr.open_dataset(f)
-        df_ts_vod = ts_vod.to_dataframe().dropna(how='all').reorder_levels(['Epoch', 'SV']).sort_index()
+        df_ts_vod = ts_vod.to_dataframe().dropna(how='all').reset_index().set_index(['Epoch', 'SV']).sort_index()
+
+        # Make products only for elevation smaller than max elevation
+        if max_elevation < 90:
+            print(f"Filter max elevation, length {df_ts_vod.shape}")
+            zenith, azimuth = get_angles_by_cellid(df_ts_vod["CellID"].values)
+            df_ts_vod = df_ts_vod[zenith > 90 - max_elevation]
+            max_ele = f'_maxEle{str(max_elevation)}'
+            print(f"to length {df_ts_vod.shape}")
+
+        # Make product only for constellation of sat type if defined
+        if only_const is not None:
+            print(f"Filter constellation: {only_const}, length {df_ts_vod.shape}")
+            df_ts_vod = df_ts_vod.reset_index("SV")
+            df_ts_vod = df_ts_vod[df_ts_vod['SV'].str.startswith(only_const)]
+            df_ts_vod = df_ts_vod.reset_index().set_index(['Epoch', 'SV']).sort_index()
+            print(f"to length {df_ts_vod.shape}")
+            filename_ext = f"_const{only_const}"
+
+        df_ts_vod = df_ts_vod[df_ts_vod["VOD_raw"]>-2]
         hour_sample = df_ts_vod[['VOD_raw', 'VOD', 'VOD_anom', 'CellID']].dropna().groupby(
-            [pd.Grouper(freq=f'{h_freq}h', level='Epoch'), 'CellID'])
+            [pd.Grouper(freq=freq, level='Epoch'), 'CellID'])
         count = hour_sample["VOD"].count()
         vod_cell_time_resample = hour_sample.mean()
         vod_cell_time_resample["Count"] = count
         vod_time_resample = vod_cell_time_resample.groupby(["Epoch"]).mean()
-        vod_time_resample["Cell_count"] = vod_cell_time_resample["VOD"].groupby(["Epoch"]).count()
+        vod_time_resample["Cell_count"] = vod_cell_time_resample["Count"].groupby(["Epoch"]).count()
         vod_time_resample["Count"] = vod_cell_time_resample["Count"].groupby(["Epoch"]).sum()
-        vod_time_resample["VOD_raw_tot_mean"] = df_ts_vod.groupby(pd.Grouper(freq=f'{h_freq}h', level='Epoch')).mean()["VOD_raw"]
+        vod_time_resample["VOD_raw_tot_mean"] = df_ts_vod.groupby(pd.Grouper(freq=freq, level='Epoch')).mean()["VOD_raw"]
         # ts_mean = df_ts_vod.groupby(pd.Grouper(freq=f'{h_freq}h', level='Epoch')).mean()
         timeseries_df_years.append(vod_time_resample)
         # df_ts_vod2 = ts_vod.to_dataframe().dropna(how='all').groupby(['Epoch', 'CellID'])
@@ -92,8 +130,8 @@ def calc_product(timeseries_path, baseline, hour_frequency, out_product, rain_fi
         calc_rain_product(rain_file, df_ts, baseline, hour_frequency)
 
     # Calculate the mean instantaneous VOD of a desired length (e.g. baseline length 15 days)
-    window = df_ts['VOD_raw'].rolling(window=int(24 * int(baseline) * (1/hour_frequency)), min_periods=1, center=True)
-    df_ts['VOD_anom_corr'] = df_ts['VOD_anom'] + window.mean()
+    window2 = df_ts['VOD_raw'].rolling(window='15D', center=True)#rolling(window=int(24 * int(baseline) * (1/hour_frequency)), min_periods=1, center=True)
+    df_ts['VOD'] = df_ts['VOD_anom'] + window2.mean()
     # df_ts = df_ts.rename(columns={"VOD": "VOD_raw", "VOD_anom_corr": "VOD", "VOD_mean": "VOD_bl"})
 
     # Store the VOD-product file as a .nc
@@ -102,9 +140,9 @@ def calc_product(timeseries_path, baseline, hour_frequency, out_product, rain_fi
 
     comp = dict(zlib=True, complevel=5)
     encoding = {var: comp for var in ds.data_vars}
-    ts_name = fr"{station_name}_VOD_product_bl{baseline}_{h_freq}h"
+    ts_name = fr"{station_name}_VOD_product_bl{baseline}_{freq}{max_ele}{filename_ext}"
     filepath = os.path.join(out_product, ts_name + '.nc')
-    print(f'Writing the VOD timeseries file to {filepath}')
+    print(f'Writing the VOD product file to {filepath}')
     ds.to_netcdf(filepath, format="NETCDF4", engine="netcdf4", encoding=encoding)
 
 

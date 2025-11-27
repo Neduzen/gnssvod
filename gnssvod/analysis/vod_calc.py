@@ -86,12 +86,25 @@ def calculate_vod(files, timeinterval, pairings, bands, outputdir, station_name)
                 idat[ivar] = -np.log(np.power(10, (idat[igrnname] - idat[irefname]) / 10)) \
                                      * np.cos(np.deg2rad(90 - idat[ielename]))
 
-        idat[vod_var_name] = np.nan
-        for ivar in ivars:
-            idat[vod_var_name] = idat[vod_var_name].fillna(idat[ivar].copy())
+        # idat[vod_var_name] = np.nan
+        # for ivar in ivars:
+        #     idat[vod_var_name] = idat[vod_var_name].fillna(idat[ivar].copy())
 
-        idat = idat[list([vod_var_name] + bands[station_name]) + ['Azimuth_ref', 'Elevation_ref']].rename(
-            columns={'Azimuth_ref': 'Azimuth', 'Elevation_ref': 'Elevation'})
+        # TODO: IMPROVE: Filter quality
+        band1 = ivars[0]
+        band2 = ivars[1]
+        irefname = f"{band1}_ref"
+        igrnname = f"{band1}_grn"
+        len_before = len(idat[band1])
+        # Filter low signal data
+        idat[band1][(idat[irefname] < 25) | (idat[igrnname] < 5)] = np.NaN
+        idat[band2][(idat[f"{band2}_ref"] < 25) | (idat[f"{band2}_grn"] < 5)] = np.NaN
+        # Filter both NaN vod data
+        idat = idat[~idat[band1].isna() | ~idat[band2].isna()]
+        print(f"Removed {len_before - len(idat[band1])} low signal observations.")
+
+        idat = idat[list([irefname, igrnname] + bands[station_name]) + ['Azimuth_ref', 'Elevation_ref']].rename(
+            columns={band1: 'VOD', band2: f'VOD_{band2}', 'Azimuth_ref': 'Azimuth', 'Elevation_ref': 'Elevation'})
 
     # Save vod file
     return save_vod_data(idat, timeinterval, station_name, outputdir)

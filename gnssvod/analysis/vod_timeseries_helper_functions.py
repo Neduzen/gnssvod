@@ -76,15 +76,35 @@ def filter_index_files(df_files, baseline="", year="", text="", notincluded=""):
         valid_i = True
         if baseline != "" and f'bl{baseline}' not in f and f'baseline_{baseline}' not in f:
             valid_i = False
-        if notincluded in f:
+        if notincluded != "" and notincluded in f:
             valid_i = False
-        if text not in f:
+        if text != "" and text not in f:
             valid_i = False
         if year != "" and df[1]["File"] != "All" and df[1]["Year"] != year:
             valid_i = False
         valid.append(valid_i)
 
     return df_files[valid].reset_index(drop=True)
+
+
+# --------------------
+# Add angles to df based on cellid
+# --------------------
+def get_angles_by_cellid(cell_ids):
+    # # Initialize hemispheric grid and patches
+    hemi = hemistats.hemibuild(2)
+
+    zenith = []
+    azimuth = []
+    for cell_id in cell_ids:
+        if cell_id in hemi.coords.index.values:
+            zenith.append(hemi.coords.loc[cell_id, 'ele'])
+            azimuth.append(hemi.coords.loc[cell_id, 'azi'])
+        else:
+            zenith.append(np.NaN)
+            azimuth.append(np.NaN)
+    return np.array(zenith), np.array(azimuth)
+
 
 # --------------------
 # Define time period
@@ -148,7 +168,7 @@ def open_data(filepath):
 # Calculate the baseline VOD
 # --------------------
 
-def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=False):
+def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=False, ignore_glosas=False):
     """
     Calculates a baseline VOD in the desired kernel size for each day in the selected time period.
 
@@ -225,13 +245,23 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
             if not subset_df.empty:
                 # Calculate the VOD average per cell in hemisphere based on the baseline interval
                 # print('Calculating the baseline VOD.')
+                if ignore_glosas:
+                    subset_df = subset_df.reset_index(["SV", "Epoch"])
+                    subset_df = subset_df[~subset_df['SV'].str.startswith('R')]
+                    subset_df = subset_df.set_index(["SV", "Epoch"])
+                    # vod = vod[["VOD", "CellID"]]
+
                 # Initialize hemispheric grid
                 hemi = hemistats.hemibuild(2)
                 mean = np.nanmean(subset_df["VOD"])
+                mean60 = np.nanmean(subset_df["VOD"][subset_df["Elevation"]<60])
+                mean80 = np.nanmean(subset_df["VOD"][subset_df["Elevation"]<80])
+
                 # Classify vod data into grid cells and drop the azm und ele columns after
                 vod = hemi.add_CellID(subset_df, aziname='Azimuth', elename='Elevation').drop(
                     columns=['Azimuth', 'Elevation'])
-
+                vod = vod[["VOD", "CellID"]]
+                vod = vod[~vod['VOD'].isna()]
                 # Get mean, std and count values per grid cell
                 vod_avg = vod.groupby(['CellID']).agg(['mean', 'std', 'count'])
                 # Flatten the columns
@@ -242,6 +272,14 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
                 vod_avg['Day'] = pd.to_datetime(date_obj)
                 # Add mean of all measurements within the baseline of a day
                 vod_avg['VOD_all_mean'] = mean
+                vod_avg['VOD_all_mean60ele'] = mean60
+                vod_avg['VOD_all_mean80ele'] = mean80
+                vod_avg['VOD_all_mean'] = vod_avg['VOD_all_mean'].astype('float32')
+                vod_avg['VOD_mean'] = vod_avg['VOD_mean'].astype('float32')
+                vod_avg['VOD_std'] = vod_avg['VOD_std'].astype('float32')
+
+                # vod_avg['VOD_all_mean60ele'] = vod_avg['VOD_all_mean60ele'].astype('float32')
+                # vod_avg['VOD_all_mean80ele'] = vod_avg['VOD_all_mean80ele'].astype('float32')
 
                 # Creating multiindex data frame
                 new_index = pd.MultiIndex.from_tuples([(date, cell_id) for cell_id, date in zip(vod_avg.index, vod_avg['Day'])])
@@ -276,7 +314,7 @@ def VOD_base_calc(file_dates, timeperiod, bl_kernel, out_path, bl_name, save_bs=
 # --------------------
 # Calculate time series
 # --------------------
-def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path, ts_name, save_ts=False):
+def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path, ts_name, save_ts=False, ignore_glosas=False):
     """
         Calculates the VOD timeseries in the selected time period with the selected baseline file. Uncorrected and
         baseline corrected VOD means have the same length (same time period).
@@ -347,8 +385,13 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
                 # Classify vod data into grid cells and drop the azm und ele columns after
                 vod = hemi.add_CellID(vod_day, aziname='Azimuth', elename='Elevation').drop(
                     columns=['Azimuth', 'Elevation'])
+
+                vod = vod.reset_index("SV")
+                if ignore_glosas:
+                    vod = vod[~vod['SV'].str.startswith('R')]
                 # Merge statistics with the original VOD measurements
                 vod_anom_day = vod.join(vod_bl, on='CellID')
+                # vod_anom_day['VOD_anom2'] = vod_anom_day['VOD_raw'] - vod_anom_day['bl_VOD_mean']
                 # Add to the daily file to the list
                 daily_vod_anom.append(vod_anom_day)
             except KeyError:
@@ -373,19 +416,58 @@ def vod_timeseries_baseline_correction(file_dates, timeperiod, bl_data, out_path
         # Store the timeseries VOD file as a .nc
         ds = xr.Dataset.from_dataframe(VOD_anom)
         comp = dict(zlib=True, complevel=5)
-        encoding = {var: comp for var in ds.data_vars}
+        encoding = {var: comp for var in ds.data_vars if var != "SV"}
         filepath = os.path.join(out_path, ts_name + '.nc')
         print(f'Writing the VOD timeseries file to {filepath}')
         ds.to_netcdf(filepath, format="NETCDF4", engine="netcdf4", encoding=encoding)
 
         # Store the timeseries VOD as 30min avg.
-        ds_avg = VOD_anom.groupby([pd.Grouper(freq=f'0.5h', level='Epoch'), "CellID"]).mean()
+        VOD_anom = VOD_anom.drop(columns=['SV'])
+        ds_avg = VOD_anom.groupby([pd.Grouper(freq=f'30min', level='Epoch'), "CellID"]).mean()
         # ds_avg = ds.groupby(["Epoch", "CellID"]).mean()
-        ds_avg["CountVals"] = VOD_anom.groupby([pd.Grouper(freq=f'0.5h', level='Epoch'), "CellID"])["VOD"].count()
-        ds_avg["VOD_anom_corr"] = ds_avg["VOD_anom"]+ds_avg["VOD_raw"].mean()
-        ds_avg["VOD_anom_corr2"] = ds_avg["VOD_anom"]+ds_avg['bl_VOD_mean']
-        ds_avg["VOD_anom_corr3"] = ds_avg["VOD_anom"]+ds_avg['bl_VOD_all_mean']
-        # ds_avg.Epoch[:] = ds_avg.Epoch + pd.Timedelta(minutes=15)
+        ds_avg["CountVals"] = VOD_anom.groupby([pd.Grouper(freq=f'30min', level='Epoch'), "CellID"])["VOD"].count()
+        # ds_avg["VOD_anom_corr"] = ds_avg["VOD_anom"]+ds_avg["VOD_raw"].mean()
+        # ds_avg["VOD_anom_corr2"] = ds_avg["VOD_anom"]+ds_avg['VOD_all_mean60ele']
+        # ds_avg['VOD_anom_corr2'] = ds_avg['VOD_anom_corr2'].astype('float32')
+        # ds_avg['VOD_anom_corr'] = ds_avg['VOD_anom_corr'].astype('float32')
+        #
+        # # same as vod_raw ds_avg["VOD_anom_corr3"] = ds_avg["VOD_anom"]+ds_avg['bl_VOD_all_mean']
+        #
+        # # Calculate the mean instantaneous VOD of a desired length (e.g. baseline length 15 days)
+        # # global mean per time
+        # # global_mean = (
+        # #     ds_avg.reset_index().groupby('Epoch', in)['VOD_raw']
+        # #     .mean()
+        # #     .rolling('15D', on='Epoch', center=True)
+        # #     .mean()
+        # #     .rename(columns={'VOD_raw': 'VOD_raw_roll'}.astype('float32'))
+        # # )
+        # # merge back safely on 'time'
+        # # ds_avg = pd.merge(ds_avg, global_mean, on='Epoch', how='left')
+        # # window = ds_avg.reset_index("CellID")['VOD_raw'].rolling("15D", center=True).mean()
+        # # ds_avg = ds_avg.join(window.rename('VOD_raw_roll'), on='Epoch')
+        # # ds_avg['VOD_raw_roll'] = ds_avg['VOD_raw_roll'].astype('float32')
+        # # ds_avg['VOD_anom'] = ds_avg['VOD_anom'].astype('float32')
+        # # ds_avg['VOD'] = ds_avg['VOD_anom'] + ds_avg['VOD_raw_roll']
+        # # ds_avg['VOD'] = ds_avg['VOD'].astype('float32')
+        # # ds_avg = ds_avg.drop(columns=['VOD_raw_roll'])
+        # # ds_avg['VOD'][:] = ds_avg['VOD_anom'][:] + window.mean()
+        #
+        # df_reset = ds_avg.reset_index()
+        # # Compute the mean over all cells per Epoch
+        # global_mean = (
+        #     df_reset.groupby("Epoch")["VOD_raw"].mean()
+        #     .rolling("15D", center=True)   # 15-day centered rolling window
+        #     .mean()
+        # )
+        # # Merge the global mean (by time only) back to the full DataFrame
+        # df_reset = df_reset.merge(global_mean.rename("VOD_raw_roll"), on="Epoch", how="left")
+        # # Restore MultiIndex
+        # ds_avg = df_reset.set_index(["CellID", "Epoch"]).sort_index()
+        # ds_avg["VOD"] = ds_avg["VOD_anom"] + ds_avg["VOD_raw_roll"]
+        # ds_avg['VOD'] = ds_avg['VOD'].astype('float32')
+        # ds_avg['VOD_raw_roll'] = ds_avg['VOD_raw_roll'].astype('float32')
+
         ds_avg = xr.Dataset.from_dataframe(ds_avg)
         ds_avg.Epoch.data[:] = ds_avg.Epoch.data + pd.Timedelta(minutes=15)
 

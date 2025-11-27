@@ -122,7 +122,7 @@ def isexist(fileName, delete=True, unzip_path=None):
         import pdb
         if os.path.getsize(fileName) < 20000:
             raise Warning("Zip file too small to contain observation data:", fileName)
-        elif os.path.getsize(fileName) > 5000000:
+        elif os.path.getsize(fileName) > 7000000:
             raise Warning("Zip file too big to contain observation data:", fileName)
         else:
             print(fileName + " exists | Unzipping...")

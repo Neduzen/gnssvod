@@ -306,7 +306,7 @@ def get_sp3(sp3file, directory=os.getcwd()):
     except Exception as e:
         print(" | Requested file", fileName, "cannot be found!")
         print(f"Exception: {e}")
-        raise Warning("Requested sp3 file", fileName, "cannot be found in FTP server | Exiting")
+        raise Warning("Requested sp3 file", ftp, "cannot be found in FTP server | Exiting")
 
     return fileName
     
