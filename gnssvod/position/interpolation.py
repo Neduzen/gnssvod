@@ -11,6 +11,7 @@ from gnssvod.geodesy.coordinate import cart2ell, geocentric_latitude
 from gnssvod.funcs.filename import (sp3FileName, clockFileName, ionFileName)
 from gnssvod.funcs.interpolation import coord_interp
 from gnssvod.position.position import _observation_picker_by_band
+import logging
 # ===========================================================
 
 __all__ = ["sp3_interp", "ionosphere_interp"]
@@ -41,9 +42,22 @@ def sp3_interp_fast(start_time, end_time, interval=30, poly_degree=16, sp3_produ
     svList = svList.sort_values()
     #--------------------------------------------------------------------------
     # interpolate orbit parameters to the required time interval
+    duplicate_log = False
     sp3_resampled = []
     for sv in svList:
         sp3_temp = sp3.xs(sv,level='SV')[['X','Y','Z']] * 1000 # km to m
+
+        # Check for duplicate orbit data points timestamps, average them before interpolation
+        # TODO: Check code
+        duplicate_timestamps = sp3_temp.index.duplicated(keep=False)
+        if duplicate_timestamps.any():
+            t = sp3_temp.index[duplicate_timestamps].unique().strftime('%Y-%m-%d %H:%M:%S')
+            if duplicate_log is False:
+                duplicate_log = True
+                logging.info(f"Multiple orbits available for {sv} on date {t}, discard others")
+            # Group by index and calculate the mean
+            sp3_temp = sp3_temp.groupby(sp3_temp.index).mean()
+
         # only process if a minimum of 4 orbit data points are present
         if len(sp3_temp)>3:
             sp3_temp_resampled = sp3_temp.resample(f"{interval}s")
@@ -66,6 +80,8 @@ def sp3_interp_fast(start_time, end_time, interval=30, poly_degree=16, sp3_produ
     clock_resampled = []
     for sv in svList_clk:
         clock_temp = clock.xs(sv,level='SV')
+        # Remove dublicated timestamps
+        clock_temp = clock_temp[~clock_temp.index.duplicated(keep='first')]
         # only process if a minimum of 4 clock data points are present
         if len(clock_temp)>3:
             clock_temp_resampled = clock_temp.resample(f"{interval}s")

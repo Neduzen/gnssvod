@@ -43,7 +43,7 @@ def does_a_zip_exist(fileName):
     else:
         return False
 
-def isexist(fileName):
+def isexist(fileName, delete=True, unzip_path=None):
     if os.path.exists(fileName) == False:
         if not does_a_zip_exist(fileName):
             # --------- case where neither a file nor a zip of the file exist ------------
@@ -97,7 +97,7 @@ def isexist(fileName):
         else:
             fileName = does_a_zip_exist(fileName)
             print(fileName + " exists | Extracting...")
-            decompress_on_disk(fileName, delete=True)
+            decompress_on_disk(fileName, delete=delete)
             
  # --------- case where the required file and also a zip of it exist -------------------
     elif does_a_zip_exist(fileName):
@@ -107,9 +107,18 @@ def isexist(fileName):
  # --------- case where the required file exists and is a zip file ---------------------
     elif iszip(fileName):
         import pdb
-        decompress_on_disk(fileName, delete=True)
-        print(fileName + " exists | Reading...") 
-        
- # --------- case where the required file exists and is not a zip file -----------------
+        if os.path.getsize(fileName) < 20000:
+            raise Warning("Zip file too small to contain observation data:", fileName)
+        elif os.path.getsize(fileName) > 7000000:
+            raise Warning("Zip file too big to contain observation data:", fileName)
+        else:
+            print(fileName + " exists | Unzipping...")
+            unzipped = decompress_on_disk(fileName, delete=delete, unzip_path=unzip_path)
+            fileName = unzipped.absolute().as_posix()
+            print(fileName + " unzipped | Reading...")
+
+    # --------- case where the required file exists and is not a zip file -----------------
     else:
         print(fileName + " exists | Reading...")
+
+    return fileName

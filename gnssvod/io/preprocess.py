@@ -6,7 +6,11 @@ gather_stations merges observations from sites according to specified pairing ru
 # ===========================================================
 # ========================= imports =========================
 import os
+import sys
+from tqdm import trange, tqdm
+import time
 import glob
+import datetime
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -15,11 +19,15 @@ import fnmatch
 from pathlib import Path
 from typing import Union, Literal, Any
 from gnssvod.io.io import Observation
-from gnssvod.io.readFile import read_obsFile
+from gnssvod.io.readFile import read_obsFile, FileError
 from gnssvod.io.exporters import export_as_nc
+from gnssvod.funcs.date import doy2date
 from gnssvod.position.interpolation import sp3_interp_fast
 from gnssvod.position.position import gnssDataframe
 from gnssvod.funcs.constants import _system_name
+import logging
+
+
 #-------------------------------------------------------------------------
 #----------------- FILE SELECTION AND BATCH PROCESSING -------------------
 #-------------------------------------------------------------------------
@@ -29,10 +37,13 @@ def preprocess(filepattern: dict,
                keepvars: Union[list,None] = None,
                outputdir: Union[dict, None] = None,
                overwrite: bool = False,
+               unzip_path=None,
                encoding: Union[None, Literal['default'], dict] = 'default',
                outputresult: bool = False,
                aux_path: Union[str, None] = None,
-               approx_position: list[float] = None) -> dict[Any,list[Observation]]:
+               approx_position: list[float] = None,
+               splitter=["_raw"],
+               time_period=None,) -> dict[Any,list[Observation]]:
     """
     Reads and processes structured lists of RINEX observation files.
     
@@ -71,7 +82,7 @@ def preprocess(filepattern: dict,
         finer customization of the encoding.
 
     overwrite: bool (optional)
-        If False (default), RINEX files with an existing matching file in the 
+        If False (default), RINEX files with an existing matching file in the
         specified output directory will be skipped entirely
 
     outputresult: bool (optional)
@@ -83,15 +94,15 @@ def preprocess(filepattern: dict,
         If None is passed (default), a temporary directory is created and cleaned up if the processing succeeds.
 
     approx_position: list (optional)
-        Position of the antenna provided as a list of cartesian coordinates [X,Y,Z]. This argument can be used to replace the 
-        approximate position taken from the source RINEX files. 
-        It is mandatory if source RINEX files actually miss the "APPROX POSITION XYZ" information in the header and the 
-        'orbit' option is True. 
+        Position of the antenna provided as a list of cartesian coordinates [X,Y,Z]. This argument can be used to replace the
+        approximate position taken from the source RINEX files.
+        It is mandatory if source RINEX files actually miss the "APPROX POSITION XYZ" information in the header and the
+        'orbit' option is True.
         To convert geographic coordinates (lat, lon, h) to cartesian (X,Y,Z) use gnssvod.geodesy.coordinate.ell2cart(lat,lon,h).
 
     Returns
     -------
-    If outputresult = True, returns a dictionary. There is one key per station name and each item contains the GNSS observation object read 
+    If outputresult = True, returns a dictionary. There is one key per station name and each item contains the GNSS observation object read
     from each input RINEX file. For example output={'station1':[gnssvod.io.io.Observation,gnssvod.io.io.Observation,...]}
     
     """
@@ -100,7 +111,7 @@ def preprocess(filepattern: dict,
         tmp_folder = tempfile.TemporaryDirectory()
         aux_path = tmp_folder.name
         print(f"Created a temporary directory at {aux_path}")
-    else: 
+    else:
         tmp_folder = None
     # grab all files matching the patterns
     filelist = get_filelist(filepattern)
@@ -110,71 +121,99 @@ def preprocess(filepattern: dict,
         station_name = item[0]
         filelist = item[1]
 
+        # filter files by time period
+        if time_period is not None:
+            filelist = filter_filelist(filelist, time_period, splitter=splitter)
+
         # checking which files will be skipped (if necessary)
         if (not overwrite) and (outputdir is not None):
             # gather all files that already exist in the outputdir
-            files_to_skip = get_filelist({station_name:f"{outputdir[station_name]}*.nc"})
+            extension = f"/*.nc"  # Linux extension
+            if os.name == 'nt':  # 'nt' represents Windows
+                extension = f"\\*.nc"
+            files_to_skip = get_filelist({station_name: outputdir[station_name]+extension})
             files_to_skip = [os.path.basename(x) for x in files_to_skip[station_name]]
         else:
             files_to_skip = []
         
         # for each file
+        count_failed = 0
+        count_skipped = 0
+        count_saved = 0
         result = []
-        for i,filename in enumerate(filelist):
-            # determine the name of the output file that will be saved at the end of the loop
-            out_name = os.path.splitext(os.path.basename(filename))[0]+'.nc'
-            # if the name of the saved output file is in the files to skip, skip processing
-            if out_name in files_to_skip:
-                print(f"{out_name} already exists, skipping.. (pass overwrite=True to overwrite)")
-                continue # skip remainder of loop and go directly to next filename
-            
-            # read in the file
-            x = read_obsFile(filename)
-            print(f"Processing {len(x.observation):n} individual observations")
+        for i, filename in tqdm(enumerate(filelist), desc="Preprocessing"):#, file=sys.stdout, colour='GREEN'):#, unit="iteration", position=0, leave=True):
+            try:
+                # determine the name of the output file that will be saved at the end of the loop
+                out_name = os.path.splitext(os.path.basename(filename))[0]+'.nc'
+                # if the name of the saved output file is in the files to skip, skip processing
+                if out_name in files_to_skip:
+                    count_skipped += 1
+                    print(f"{out_name} already exists, skipping.. (pass overwrite=True to overwrite)")
+                    continue # skip remainder of loop and go directly to next filename
 
-            # only keep required vars
-            if keepvars is not None:
-                x.observation = subset_vars(x.observation,keepvars)
-                # update the observation_types list
-                x.observation_types = x.observation.columns.to_list()
+                # read in the file (save to other folder location)
+                x = read_obsFile(filename, unzip_path=unzip_path)
+                print(f"Processing {len(x.observation):n} individual observations")
 
-            # resample if required
-            if interval is not None:
-                x = resample_obs(x,interval)
-                
-            # calculate Azimuth and Elevation if required
-            if orbit:
-                # use a prescribed position if one was passed as argument
-                if approx_position is not None:
-                    x.approx_position = approx_position
-                # check that an approximate position exists before proceeding
-                if (x.approx_position == [0,0,0]) or (x.approx_position is None):
-                    raise ValueError("Missing an approximate antenna position. Provide the argument 'approx_position' to preprocess()")
-                print(f"Calculating Azimuth and Elevation")
-                # note: orbit cannot be parallelized easily because it 
-                # downloads and unzips third-party files in the current directory
-                if not 'orbit_data' in locals():
-                    # if there is no previous orbit data, the orbit data is returned as well
-                    x, orbit_data = add_azi_ele(x, aux_path = aux_path)
-                else:
-                    # on following iterations the orbit data is tentatively recycled to reduce computational time
-                    x, orbit_data = add_azi_ele(x, orbit_data, aux_path = aux_path)
+                # If no observations are available raise error
+                if len(x.observation.epoch) == 0:
+                    raise FileError(f'No observations for the rinex file {filename}.')
 
-            # make sure we drop any duplicates
-            x.observation=x.observation[~x.observation.index.duplicated(keep='first')]
-            
-            # store result in memory if required
-            if outputresult:
-                result.append(x)
-                
-            # write to file if required
-            if outputdir is not None:
-                outpath = str(Path(outputdir[station_name],out_name))
-                export_as_nc(ds = x.to_xarray(),
-                             outpath = outpath,
-                             encoding = encoding)
-                print(f"Saved {len(x.observation):n} individual observations in {outpath}")
+                # only keep required vars
+                if keepvars is not None:
+                    x.observation = subset_vars(x.observation,keepvars)
+                    # update the observation_types list
+                    x.observation_types = x.observation.columns.to_list()
 
+                # resample if required
+                if interval is not None:
+                    x = resample_obs(x,interval)
+
+                # calculate Azimuth and Elevation if required
+                if orbit:
+                    # use a prescribed position if one was passed as argument
+                    if approx_position is not None:
+                        x.approx_position = approx_position
+                    # check that an approximate position exists before proceeding
+                    if (x.approx_position == [0, 0, 0]) or (x.approx_position is None):
+                        raise ValueError(
+                            "Missing an approximate antenna position. Provide the argument 'approx_position' to preprocess()")
+                    print(f"Calculating Azimuth and Elevation")
+                    # note: orbit cannot be parallelized easily because it
+                    # downloads and unzips third-party files in the current directory
+                    if not 'orbit_data' in locals():
+                        # if there is no previous orbit data, the orbit data is returned as well
+                        x, orbit_data = add_azi_ele(x)
+                    else:
+                        # on following iterations the orbit data is tentatively recycled to reduce computational time
+                        x, orbit_data = add_azi_ele(x, orbit_data)
+
+                # make sure we drop any duplicates
+                x.observation = x.observation[~x.observation.index.duplicated(keep='first')]
+
+                # store result in memory if required
+                if outputresult:
+                    result.append(x)
+
+                # write to file if required
+                if outputdir is not None:
+                    outpath = str(Path(outputdir[station_name], out_name))
+                    # check that the output directory exists
+                    if not os.path.exists(outpath):
+                        os.makedirs(outpath)
+                    # delete file if it exists
+                    out_path = os.path.join(ioutputdir, out_name)
+                    if os.path.exists(out_path):
+                        os.remove(out_path)
+                    export_as_nc(ds = x.to_xarray(),
+                                 outpath = outpath,
+                                 encoding = encoding)
+                    print(f"Saved {len(x.observation):n} individual observations in {out_name}")
+                    count_saved += 1
+            except (FileError, Warning) as ex:
+                count_failed+=1
+                logging.error(f"File error for {out_name} while processing: {ex}")
+                print(f"Error for file {out_name} while processing: {ex}")
         # store station in memory if required
         if outputresult:
             out[station_name]=result
@@ -221,8 +260,8 @@ def resample_obs(obs: Observation, interval: str) -> Observation:
     obs.interval = pd.Timedelta(interval).seconds
     return obs
 
-def add_azi_ele(obs: Observation, 
-                orbit_data: Union[pd.DataFrame,None] = None, 
+def add_azi_ele(obs: Observation,
+                orbit_data: Union[pd.DataFrame,None] = None,
                 aux_path: Union[str,None] = None) -> tuple[Observation,pd.DataFrame]:
     start_time = min(obs.observation.index.get_level_values('Epoch'))
     end_time = max(obs.observation.index.get_level_values('Epoch'))
@@ -264,11 +303,34 @@ def get_filelist(filepatterns: dict) -> dict:
         station_name = item[0]
         search_pattern = item[1]
         flist = glob.glob(search_pattern)
-        if len(flist)==0:
+        if len(flist) == 0:
             print(f"Could not find any files matching the pattern {search_pattern}")
         filelists[station_name] = flist
     return filelists
 
+
+def filter_filelist(files, time_period, splitter=["raw_"]):
+    date_min = time_period[0].left
+    date_max = time_period[-1].right
+    print(f"Filter files between {date_min} and {date_max}")
+
+    filtered = []
+    for f in files:
+        try:
+            date_str = None
+            for s in splitter:
+                if s in f:
+                    date_str = f.split(s)[1][:10]
+                else:
+                    continue
+            date_time = pd.to_datetime(date_str, format='%Y%m%d%H')
+            if date_min <= date_time < date_max:
+                filtered.append(f)
+        except:
+            continue
+    print(f"From {len(files)} filtered to {len(filtered)}")
+
+    return filtered
 
 #--------------------------------------------------------------------------
 #----------------- PAIRING OBSERVATION FILES FROM SITES -------------------
@@ -280,9 +342,10 @@ def gather_stations(filepattern: dict,
                     keepvars: Union[list,None] = None,
                     outputdir: Union[dict, None] = None,
                     encoding: Union[None, Literal['default'], dict] = None,
-                    outputresult: bool = False) -> dict[Any,pd.DataFrame]:
+                    outputresult: bool = False,
+                    splitter=[]) -> dict[Any,pd.DataFrame]:
     """
-    Merges observations from different sites according to specified pairing rules. The new dataframe will contain 
+    Merges observations from different sites according to specified pairing rules. The new dataframe will contain
     a new index level corresponding to each site, with keys corresponding to station names.
     
     Parameters
@@ -341,7 +404,7 @@ def gather_stations(filepattern: dict,
     # get min and max timestamp for each file (will be used to select which files to read later)
     epochs_min = {key:[np.min(x) for x in items] for key,items in epochs.items()}
     epochs_max = {key:[np.max(x) for x in items] for key,items in epochs.items()}
-    
+
     result=dict()
     for case_name, station_names in pairings.items():
         out = []
@@ -385,7 +448,7 @@ def gather_stations(filepattern: dict,
                     if len(iout)==0:
                         print(f"No observations left after subsetting columns (argument 'keepvars')")
                         continue
-                
+
                 # output the data as .nc if required
                 if outputdir:
                     ioutputdir = outputdir[case_name]
